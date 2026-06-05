@@ -10,7 +10,7 @@ jobs:
   deploy-infrastructure:
     name: Sync and Apply Infrastructure State
     # Chỉ định chạy trên chính con máy ảo Salt Master của bạn
-    runs-on: self-hosted
+    runs-on: Salt
 
     steps:
       # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
