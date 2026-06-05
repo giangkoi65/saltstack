@@ -7,23 +7,50 @@ on:
       - main
 
 jobs:
-  deploy-infrastructure:
-    name: Sync and Apply Infrastructure State
-    # Chỉ định chạy trên chính con máy ảo Salt Master của bạn
-    runs-on: Salt
-
+  deploy-to-primary:
+    name: 🥇 Deploy via Primary Master (ubuntu)
+    runs-on: ubuntu
     steps:
-      # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
-      - name: 🔄 Update Salt Fileserver Cache from Git
+      # Kiểm tra xem Master này có thực sự nắm giữ Minion nào không
+      # Nếu số dòng trả về = 0 (không có minion), lệnh sẽ exit 1 để kích hoạt Job dự phòng.
+      - name: 🔍 Verify Active Minions Presence
         run: |
-          sudo salt-run fileserver.update
+          ACTIVE_COUNT=$(sudo salt-run manage.up --out=newline | wc -l)
+          echo "Số lượng Minion đang kết nối tới Master này: $ACTIVE_COUNT"
+          if [ "$ACTIVE_COUNT" -eq 0 ]; then
+            echo "Không có Minion nào online tại đây. Chuyển quyền sang Master dự phòng..."
+            exit 1
+          fi
+        
+      - name: 🔄 Update Salt Fileserver Cache
+        run: sudo salt-run fileserver.update
           
-      # Bước 2: Ra lệnh cho toàn bộ các Minion cập nhật lại bộ nhớ đệm dữ liệu Pillar
       - name: 🔋 Refresh Minions Pillar Cache
-        run: |
-          sudo salt '*' saltutil.refresh_pillar
+        run: sudo salt '*' saltutil.refresh_pillar -t 20
 
-      # Bước 3: Thực thi áp đặt trạng thái để cập nhật Nginx (Continuous Deployment)
-      - name: 🚀 Continuous Deployment - Apply Nginx State
+      - name: 🚀 Apply Nginx State
+        run: sudo salt '*' state.apply nginx -t 30
+
+  deploy-to-secondary:
+    name: 🥈 Failover - Deploy via Secondary Master (ubuntumaster2)
+    needs: deploy-to-primary
+    if: failure() 
+    runs-on: ubuntumaster2
+    steps:
+      # Master 2 cũng cần kiểm tra tương tự đề phòng trường hợp cả 2 Master đều mất sạch Minion
+      - name: 🔍 Verify Active Minions Presence (Backup Master)
         run: |
-          sudo salt '*' state.apply nginx
+          ACTIVE_COUNT=$(sudo salt-run manage.up --out=newline | wc -l)
+          if [ "$ACTIVE_COUNT" -eq 0 ]; then
+            echo "Master dự phòng cũng không thấy Minion nào. Hệ thống có thể đang sập hoàn toàn."
+            exit 1
+          fi
+
+      - name: 🔄 Update Salt Fileserver Cache (Backup)
+        run: sudo salt-run fileserver.update
+          
+      - name: 🔋 Refresh Minions Pillar Cache (Backup)
+        run: sudo salt '*' saltutil.refresh_pillar -t 20
+
+      - name: 🚀 Apply Nginx State (Backup)
+        run: sudo salt '*' state.apply nginx -t 30
