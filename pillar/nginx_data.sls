@@ -1,2 +1,2 @@
 nginx:
-  port: 8080
+  port: 80
