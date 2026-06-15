@@ -13,6 +13,22 @@ jobs:
     runs-on: Salt
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # THÊM BƯỚC NÀY ĐỂ CHECK XEM LỖI Ở ĐÂU
+      - name: 🔍 Debug Hệ Thống Runner
+        run: |
+          echo "=== Tên máy (Hostname) đang chạy pipeline này là: ==="
+          hostname
+          echo "=== User đang chạy lệnh này là: ==="
+          whoami
+          echo "=== Tìm vị trí thực tế của lệnh salt: ==="
+          whereis salt-run
+          whereis salt
+          echo "=== Thử kiểm tra quyền sudo mà không có đường dẫn: ==="
+          sudo -l
+          
       # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
