@@ -13,9 +13,6 @@ jobs:
     runs-on: Salt
 
     steps:
-
-      - name: Check current user
-        run: whoami
       # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
