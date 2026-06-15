@@ -1,6 +1,5 @@
 name: SaltStack GitOps Continuous Deployment
 
-# Pipeline tự động kích hoạt mỗi khi có hành động PUSH vào nhánh main
 on:
   push:
     branches:
@@ -9,21 +8,31 @@ on:
 jobs:
   deploy-infrastructure:
     name: Sync and Apply Infrastructure State
-    # Chỉ định chạy trên chính con máy ảo Salt Master của bạn
     runs-on: Salt
 
     steps:
-      # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
-      - name: 🔄 Update Salt Fileserver Cache from Git
+      # Bước 1: Dùng đường dẫn tuyệt đối và tự động cập nhật cache trên CẢ HAI Master
+      - name: 🔄 Update Salt Fileserver Cache on BOTH Masters
         run: |
-          sudo salt-run fileserver.update
+          # 1. Luôn cập nhật trực tiếp trên con Master hiện tại đang gánh Runner này
+          sudo /usr/bin/salt-run fileserver.update
           
-      # Bước 2: Ra lệnh cho toàn bộ các Minion cập nhật lại bộ nhớ đệm dữ liệu Pillar
+          # 2. Tự động kiểm tra xem mình đang đứng ở Node nào để ra lệnh cho Node còn lại cập nhật qua Salt nội bộ
+          CURRENT_HOST=$(hostname)
+          if [ "$CURRENT_HOST" = "master-node-1" ]; then
+            echo "Đang chạy trên Master 1 -> Ra lệnh cho Master 2 cập nhật cache..."
+            sudo /usr/bin/salt 'master-node-2' cmd.run "sudo /usr/bin/salt-run fileserver.update"
+          elif [ "$CURRENT_HOST" = "master-node-2" ]; then
+            echo "Đang chạy trên Master 2 -> Ra lệnh cho Master 1 cập nhật cache..."
+            sudo /usr/bin/salt 'master-node-1' cmd.run "sudo /usr/bin/salt-run fileserver.update"
+          fi
+          
+      # Bước 2: Làm mới bộ nhớ đệm Pillar dữ liệu (Dùng đường dẫn tuyệt đối)
       - name: 🔋 Refresh Minions Pillar Cache
         run: |
-          sudo salt '*' saltutil.refresh_pillar
+          sudo /usr/bin/salt '*' saltutil.refresh_pillar
 
-      # Bước 3: Thực thi áp đặt trạng thái để cập nhật Nginx (Continuous Deployment)
+      # Bước 3: Áp đặt trạng thái CD cho Nginx (Dùng đường dẫn tuyệt đối)
       - name: 🚀 Continuous Deployment - Apply Nginx State
         run: |
-          sudo salt '*' state.apply nginx
+          sudo /usr/bin/salt '*' state.apply nginx
