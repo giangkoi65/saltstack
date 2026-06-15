@@ -16,14 +16,14 @@ jobs:
       # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
-          sudo salt-run fileserver.update
+          sudo /usr/bin/salt-run fileserver.update
           
       # Bước 2: Ra lệnh cho toàn bộ các Minion cập nhật lại bộ nhớ đệm dữ liệu Pillar
       - name: 🔋 Refresh Minions Pillar Cache
         run: |
-          sudo salt '*' saltutil.refresh_pillar
+          sudo /usr/bin/salt '*' saltutil.refresh_pillar
 
       # Bước 3: Thực thi áp đặt trạng thái để cập nhật Nginx (Continuous Deployment)
       - name: 🚀 Continuous Deployment - Apply Nginx State
         run: |
-          sudo salt '*' state.apply nginx
+          sudo /usr/bin/salt '*' state.apply nginx
