@@ -29,9 +29,9 @@ jobs:
         run: sleep 5
           
       # Bước 2: Ra lệnh cho toàn bộ các Minion cập nhật lại bộ nhớ đệm dữ liệu Pillar
-      - name: 🔋 Refresh Minions Pillar Cache
-        run: |
-          sudo salt '*' saltutil.refresh_pillar
+      #- name: 🔋 Refresh Minions Pillar Cache
+      #  run: |
+      #    sudo salt '*' saltutil.refresh_pillar
 
       # Bước 3: Thực thi áp đặt trạng thái để cập nhật Nginx (Continuous Deployment)
       - name: 🚀 Continuous Deployment - Apply Nginx State
