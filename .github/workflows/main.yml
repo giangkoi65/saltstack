@@ -23,7 +23,11 @@ jobs:
       # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
+          echo "📥 Updating Fileserver (States)..."
           sudo salt-run fileserver.update
+          
+          echo "📥 Updating External Pillar (Variables)..."
+          sudo salt-run git_pillar.update
 
       - name: ⏳ Wait for GitFS Sync Completion
         run: sleep 5
