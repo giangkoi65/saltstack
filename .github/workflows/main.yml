@@ -13,6 +13,13 @@ jobs:
     runs-on: Salt
 
     steps:
+      - name: 🔍 Check Current Runner Identity
+        run: |
+          echo "================================================="
+          echo "🚀 Job is running on GitHub Runner: ${{ runner.name }}"
+          echo "💻 OS Hostname: $(hostname)"
+          echo "================================================="
+
       # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
