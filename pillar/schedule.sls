@@ -7,3 +7,4 @@ schedule:
     kwargs:
       saltenv: main
       pillarenv: main
+      test: True
