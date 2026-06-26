@@ -1,4 +1,4 @@
-{% if 'change' in data or data['mask'] in ['IN_MODIFY', 'IN_CLOSE_WRITE'] %}
+{% if 'change' in data and data['change'] in ['IN_MODIFY', 'IN_CLOSE_WRITE'] %}
 revert_unauthorized_nginx_drift:
   local.state.apply:
     - tgt: {{ data['id'] }}
