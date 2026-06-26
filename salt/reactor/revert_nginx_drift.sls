@@ -1,3 +1,4 @@
+
 {% if 'change' in data and data['change'] in ['IN_MODIFY', 'IN_CLOSE_WRITE'] %}
 revert_unauthorized_nginx_drift:
   local.state.apply:
@@ -5,7 +6,7 @@ revert_unauthorized_nginx_drift:
     - arg:
       - nginx
     - kwarg:
-        saltenv: main
-        pillarenv: main
+        saltenv: base
+        pillarenv: base
         queue: True
 {% endif %}

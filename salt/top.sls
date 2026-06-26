@@ -1,3 +1,3 @@
-main:
+base:
   'ubuntu-minion-*':
     - nginx

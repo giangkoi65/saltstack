@@ -1,4 +1,4 @@
-main:
+base:
   'ubuntu-minion-*':
     - nginx_data
     - beacons
