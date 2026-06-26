@@ -40,4 +40,4 @@ jobs:
       # Bước 3: Thực thi áp đặt trạng thái để cập nhật Nginx (Continuous Deployment)
       - name: 🚀 Continuous Deployment - Apply Nginx State
         run: |
-          sudo salt '*' state.apply nginx saltenv=base pillarenv=base queue=True
+          sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True
