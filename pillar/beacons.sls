@@ -7,7 +7,7 @@ beacons:
         /etc/nginx/sites-available/mysite.conf:
           mask:
             - close_write
-        /var/www/mysite/index.html
+        /var/www/mysite/index.html:
           mask:
             - close_write
     - disable_during_state_run: True
