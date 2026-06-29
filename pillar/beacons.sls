@@ -3,10 +3,11 @@ beacons:
     - files:
         /etc/nginx/nginx.conf:
           mask:
-            - modify
             - close_write
         /etc/nginx/sites-available/mysite.conf:
           mask:
-            - modify
+            - close_write
+        /var/www/mysite/index.html:
+          mask:
             - close_write
     - disable_during_state_run: True
