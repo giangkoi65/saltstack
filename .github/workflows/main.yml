@@ -35,9 +35,19 @@ jobs:
       # Bước 2: Ra lệnh cho toàn bộ các Minion cập nhật lại bộ nhớ đệm dữ liệu Pillar
       - name: 🔋 Refresh Minions Pillar Cache
         run: |
-          sudo salt '*' saltutil.refresh_pillar
+          echo "Kiểm tra xem Minion có đang kết nối tới Master này không..."
+          if sudo salt '*' test.ping -t 5 | grep -q "True"; then
+            echo "✅ Minion đang Active trên Node này. Tiến hành cập nhật cấu hình..."
+            sudo salt '*' saltutil.refresh_pillar -t 30
+          else
+            echo "⏭️ Minion không phản hồi trên Node này (Đây là Passive Master). Bỏ qua bước Refresh."
+          fi
 
-      # Bước 3: Thực thi áp đặt trạng thái để cập nhật Nginx (Continuous Deployment)
       - name: 🚀 Continuous Deployment - Apply Nginx State
         run: |
-          sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True
+          if sudo salt '*' test.ping -t 5 | grep -q "True"; then
+            echo "Applying deployment..."
+            sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True -t 30
+          else
+            echo "⏭️ Bỏ qua Apply State trên Passive Master."
+          fi
