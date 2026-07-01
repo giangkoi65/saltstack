@@ -7,90 +7,90 @@ on:
 
 jobs:
   deploy-infrastructure:
-    name: Sync and Apply Infrastructure State
-    runs-on: ${{ matrix.target_master }}
-    timeout-minutes: 10 # Giới hạn thời gian chạy, tránh việc treo job quá lâu nếu có sự cố kẹt tiến trình
-
-    strategy:
-      matrix:
-        target_master: [Salt, Salt2] 
-      fail-fast: false # Đảm bảo nếu một Master lỗi/sập, Master còn lại vẫn tiếp tục chạy job
+    name: Orchestrate SaltStack HA Cluster
+    runs-on: ubuntu-latest # Chạy trên hạ tầng cloud của GitHub, không lo sập Runner kẹt hàng đợi
+    timeout-minutes: 5
 
     steps:
-      - name: 🔍 Check Current Runner Identity
+      - name: 🔑 Setup SSH Key for Deployment
         run: |
-          echo "================================================="
-          echo "🚀 Job is running on GitHub Runner: ${{ matrix.target_master }}"
-          echo "💻 OS Hostname: $(hostname)"
-          echo "================================================="
+          mkdir -p ~/.ssh
+          # Giải mã SSH Private Key (Bạn cần add khóa private vào GitHub Secrets với tên MASTER_SSH_PRIVATE_KEY)
+          echo "${{ secrets.MASTER_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          # Tắt cơ chế cảnh báo Yes/No khi kết nối SSH lần đầu và đặt Timeout kết nối là 5 giây
+          echo -e "Host *\n\tStrictHostKeyChecking no\n\tConnectTimeout 5" > ~/.ssh/config
 
-      - name: 🔄 Update Salt Fileserver Cache from Git
+      - name: 🚀 Intelligent GitOps Routing & Execution
         run: |
-          # Kiểm tra xem dịch vụ salt-master trên máy này có đang chạy không
-          if systemctl is-active --quiet salt-master; then
-            echo "📥 Updating Fileserver (States)..."
-            sudo salt-run fileserver.update
+          # Định nghĩa danh sách các Master kèm chính xác SSH User theo Inventory của bạn
+          MASTERS=("node1@192.168.15.129" "node2@192.168.15.130")
+          DEPLOY_SUCCESS=false
+
+          for TARGET in "${MASTERS[@]}"; do
+            # Tách chuỗi để lấy IP hiển thị log
+            MASTER_IP=$(echo $TARGET | cut -d'@' -f2)
+
+            echo "==================================================="
+            echo "📡 Connecting to Salt Master: $MASTER_IP..."
+            echo "==================================================="
+
+            # BƯỚC 1: Kiểm tra kết nối mạng/SSH tới Host (Timeout 3 giây)
+            if ! nc -z -w 3 $MASTER_IP 22; then
+              echo "❌ Host $MASTER_IP sập hoàn toàn hoặc chặn SSH. Chuyển sang Node tiếp theo..."
+              continue
+            fi
+
+            # BƯỚC 2: Kiểm tra xem DỊCH VỤ salt-master bên trong có sống không
+            SERVICE_STATUS=$(ssh $TARGET "systemctl is-active salt-master" 2>/dev/null || echo "failed")
+            if [ "$SERVICE_STATUS" != "active" ]; then
+              echo "⚠️ Host $MASTER_IP Online, nhưng DỊCH VỤ salt-master ĐÃ SẬP (Trạng thái: $SERVICE_STATUS)!"
+              echo "⏭️ Bỏ qua Node lỗi này, chuyển hướng sang Node dự phòng..."
+              continue
+            fi
+
+            echo "✅ Dịch vụ salt-master trên $MASTER_IP đang HOẠT ĐỘNG tốt."
+
+            # BƯỚC 3: Đồng bộ GitFS Cache
+            echo "📥 Updating Fileserver & Pillar Cache on $MASTER_IP..."
+            ssh $TARGET "sudo salt-run fileserver.update && sudo salt-run git_pillar.update"
             
-            echo "📥 Updating External Pillar (Variables)..."
-            sudo salt-run git_pillar.update
-          else
-            echo "⏭️ Dịch vụ salt-master KHÔNG chạy trên node này. Bỏ qua bước cập nhật cache để tránh lỗi."
-          fi
-
-      - name: ⏳ Wait for GitFS Sync Completion
-        run: |
-          if systemctl is-active --quiet salt-master; then
+            echo "⏳ Waiting for GitFS Sync Completion..."
             sleep 5
-          fi
-          
-      - name: 🔋 Refresh Minions Pillar Cache
-        run: |
-          # Chỉ thực hiện nếu dịch vụ salt-master đang sống
-          if systemctl is-active --quiet salt-master; then
-            echo "Kiểm tra xem Minion có đang kết nối tới Master này không..."
-            if sudo salt '*' test.ping -t 5 | grep -q "True"; then
-              echo "✅ Minion đang Active trên Node này. Tiến hành cập nhật cấu hình..."
-              sudo salt '*' saltutil.refresh_pillar -t 30
-            else
-              echo "⏭️ Minion không phản hồi trên Node này (Đây là Passive Master). Bỏ qua bước Refresh."
-            fi
-          else
-            echo "⏭️ Dịch vụ salt-master không hoạt động. Bỏ qua bước kiểm tra Minion."
-          fi
 
-      - name: 🚀 Continuous Deployment - Apply Nginx State
-        run: |
-          if systemctl is-active --quiet salt-master; then
-            if sudo salt '*' test.ping -t 5 | grep -q "True"; then
-              echo "Applying deployment..."
-              sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True -t 30
-            else
-              echo "⏭️ Bỏ qua Apply State trên Passive Master."
-            fi
-          else
-            echo "⏭️ Dịch vụ salt-master không hoạt động. Bỏ qua Apply State."
-          fi
-
-      - name: 🔄 Automatic Failback to Master 1 (Primary)
-        run: |
-          if systemctl is-active --quiet salt-master; then
-            CURRENT_HOST=$(hostname)
-            
-            if sudo salt '*' test.ping -t 5 | grep -q "True"; then
-              if [[ "$CURRENT_HOST" == *"master2"* ]] || [[ "$CURRENT_HOST" == *"node2"* ]]; then
-                echo "⚠️ Phát hiện đây là Master 2 (Dự phòng) nhưng đang gánh Minion!"
-                echo "⏳ Đang kiểm tra xem Master 1 (192.168.15.129) đã sống lại chưa..."
-                
+            # BƯỚC 4: Kiểm tra trạng thái Active/Passive của cụm thông qua kết nối Minion
+            echo "🔋 Checking active Minions connection..."
+            if ssh $TARGET "sudo salt '*' test.ping -t 5" | grep -q "True"; then
+              echo "🎯 Minion đang ACTIVE tại $MASTER_IP. Tiến hành Apply State!"
+              
+              echo "🔄 Refreshing Pillar..."
+              ssh $TARGET "sudo salt '*' saltutil.refresh_pillar -t 30"
+              
+              echo "🚀 Applying Nginx Deployment..."
+              ssh $TARGET "sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True -t 30"
+              
+              # BƯỚC 5: Xử lý Tự động Failback nếu đang phải chạy trên Master 2 (Dự phòng)
+              if [ "$MASTER_IP" == "192.168.15.130" ]; then
+                echo "⚠️ Đang chạy trên Master 2. Kiểm tra xem Master 1 (Primary) đã hồi sinh dịch vụ chưa..."
                 if nc -z -w 3 192.168.15.129 4505; then
-                  echo "🚀 Master 1 đã ONLINE trở lại!"
-                  echo "🔄 Ra lệnh cho Minion tự restart ở chế độ chạy ngầm (bg=True) để quay về Master 1..."
-                  sudo salt '*' cmd.run 'sleep 3 && systemctl restart salt-minion' bg=True
-                  echo "✅ Đã phát lệnh Failback thành công. Minion sẽ về Master 1."
+                  echo "🚀 Cổng kết nối Salt Master 1 (4505) đã ONLINE trở lại!"
+                  echo "🔄 Ra lệnh cho Minion restart ngầm (bg=True) để tự động hồi chuyển về Master 1..."
+                  ssh $TARGET "sudo salt '*' cmd.run 'sleep 3 && systemctl restart salt-minion' bg=True"
+                  echo "✅ Đã phát lệnh Failback thành công."
                 else
-                  echo "⏭️ Master 1 vẫn đang sập. Giữ nguyên kết nối tại Master 2 để đảm bảo High Availability."
+                  echo "⏭️ Master 1 vẫn sập. Giữ nguyên kết nối tại Master 2 để đảm bảo High Availability."
                 fi
               fi
+
+              DEPLOY_SUCCESS=true
+              break # Đã tìm thấy Node Active và xử lý xong, thoát vòng lặp ngay lập tức!
+            else
+              echo "⏭️ Minion không phản hồi trên $MASTER_IP (Đây là Passive Master). Bỏ qua."
+              DEPLOY_SUCCESS=true # Vẫn tính thành công vì hạ tầng vẫn chạy ổn định ở Node còn lại
             fi
-          else
-            echo "⏭️ Dịch vụ salt-master không hoạt động. Không thể thực hiện Failback từ node này."
+          done
+
+          if [ "$DEPLOY_SUCCESS" = false ]; then
+            echo "🚨 THẤT BẠI: Toàn bộ cụm Salt Master hoặc dịch vụ đều đã sập!"
+            exit 1
           fi
