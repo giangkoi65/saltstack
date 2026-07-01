@@ -27,8 +27,8 @@ nginx:
 # 2. Tạo thư mục chứa mã nguồn website trên Minion
 /var/www/mysite:
   file.directory:
-    - user: www-data
-    - group: www-data
+    - user: root
+    - group: root
     - mode: 755
     - makedirs: True
     - require:
@@ -38,8 +38,8 @@ nginx:
 /var/www/mysite/index.html:
   file.managed:
     - source: salt://nginx/files/index.html
-    - user: www-data
-    - group: www-data
+    - user: root
+    - group: root
     - mode: 644
     - require:
       - file: /var/www/mysite
