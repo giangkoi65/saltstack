@@ -1,6 +1,5 @@
 name: SaltStack GitOps Continuous Deployment
 
-# Pipeline tự động kích hoạt mỗi khi có hành động PUSH vào nhánh main
 on:
   push:
     branches:
@@ -9,30 +8,27 @@ on:
 jobs:
   deploy-infrastructure:
     name: Sync and Apply Infrastructure State
-    # Chỉ định chạy trên chính con máy ảo Salt Master của bạn
-    runs-on: Salt
-
+    runs-on: ${{ matrix.target_master }}
+    
     steps:
       - name: 🔍 Check Current Runner Identity
         run: |
           echo "================================================="
-          echo "🚀 Job is running on GitHub Runner: ${{ runner.name }}"
+          echo "🚀 Job is running on GitHub Runner: ${{ matrix.target_master }}"
           echo "💻 OS Hostname: $(hostname)"
           echo "================================================="
 
-      # Bước 1: Ra lệnh cho Salt Master xóa cache cũ, kéo code mới nhất từ GitHub Repo về RAM
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
           echo "📥 Updating Fileserver (States)..."
           sudo salt-run fileserver.update
-
+          
           echo "📥 Updating External Pillar (Variables)..."
           sudo salt-run git_pillar.update
 
       - name: ⏳ Wait for GitFS Sync Completion
         run: sleep 5
-
-      # Bước 2: Ra lệnh cho toàn bộ các Minion cập nhật lại bộ nhớ đệm dữ liệu Pillar
+          
       - name: 🔋 Refresh Minions Pillar Cache
         run: |
           echo "Kiểm tra xem Minion có đang kết nối tới Master này không..."
@@ -50,4 +46,27 @@ jobs:
             sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True -t 30
           else
             echo "⏭️ Bỏ qua Apply State trên Passive Master."
+          fi
+
+      - name: 🔄 Automatic Failback to Master 1 (Primary)
+        run: |
+          # Kiểm tra xem đây có phải là Master 2 hay không dựa vào tên Runner hoặc hostname
+          # Ở đây tôi check nếu hostname chứa chữ 'master2' hoặc 'node-2' tùy cấu hình OS của bạn
+          CURRENT_HOST=$(hostname)
+          
+          if sudo salt '*' test.ping -t 5 | grep -q "True"; then
+            if [[ "$CURRENT_HOST" == *"master2"* ]] || [[ "$CURRENT_HOST" == *"node2"* ]]; then
+              echo "⚠️ Phát hiện đây là Master 2 (Dự phòng) nhưng đang gánh Minion!"
+              echo "⏳ Đang kiểm tra xem Master 1 (192.168.15.129) đã sống lại chưa..."
+              
+              if nc -z -w 3 192.168.15.129 4505; then
+                echo "🚀 Master 1 đã ONLINE trở lại!"
+                echo "🔄 Ra lệnh cho Minion tự restart ở chế độ chạy ngầm (bg=True) để quay về Master 1..."
+                # Sử dụng bg=True để Salt trả kết quả về CI ngay lập tức, tránh bị treo lệnh khi Minion sập dịch vụ để restart
+                sudo salt '*' cmd.run 'sleep 3 && systemctl restart salt-minion' bg=True
+                echo "✅ Đã phát lệnh Failback thành công. Minion sẽ về Master."
+              else
+                echo "⏭️ Master 1 vẫn đang sập. Giữ nguyên kết nối tại Master 2 để đảm bảo High Availability."
+              fi
+            fi
           fi
