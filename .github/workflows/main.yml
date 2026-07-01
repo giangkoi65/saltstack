@@ -9,7 +9,12 @@ jobs:
   deploy-infrastructure:
     name: Sync and Apply Infrastructure State
     runs-on: ${{ matrix.target_master }}
-    
+
+    strategy:
+      matrix:
+        target_master: [Salt, Salt2] 
+      fail-fast: false # Đảm bảo nếu một Master lỗi/sập, Master còn lại vẫn tiếp tục chạy job
+
     steps:
       - name: 🔍 Check Current Runner Identity
         run: |
@@ -50,8 +55,6 @@ jobs:
 
       - name: 🔄 Automatic Failback to Master 1 (Primary)
         run: |
-          # Kiểm tra xem đây có phải là Master 2 hay không dựa vào tên Runner hoặc hostname
-          # Ở đây tôi check nếu hostname chứa chữ 'master2' hoặc 'node-2' tùy cấu hình OS của bạn
           CURRENT_HOST=$(hostname)
           
           if sudo salt '*' test.ping -t 5 | grep -q "True"; then
@@ -62,9 +65,8 @@ jobs:
               if nc -z -w 3 192.168.15.129 4505; then
                 echo "🚀 Master 1 đã ONLINE trở lại!"
                 echo "🔄 Ra lệnh cho Minion tự restart ở chế độ chạy ngầm (bg=True) để quay về Master 1..."
-                # Sử dụng bg=True để Salt trả kết quả về CI ngay lập tức, tránh bị treo lệnh khi Minion sập dịch vụ để restart
                 sudo salt '*' cmd.run 'sleep 3 && systemctl restart salt-minion' bg=True
-                echo "✅ Đã phát lệnh Failback thành công. Minion sẽ về Master."
+                echo "✅ Đã phát lệnh Failback thành công. Minion sẽ về Master 1."
               else
                 echo "⏭️ Master 1 vẫn đang sập. Giữ nguyên kết nối tại Master 2 để đảm bảo High Availability."
               fi
