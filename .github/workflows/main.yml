@@ -9,6 +9,7 @@ jobs:
   deploy-infrastructure:
     name: Sync and Apply Infrastructure State
     runs-on: ${{ matrix.target_master }}
+    timeout-minutes: 10 # Giới hạn thời gian chạy, tránh việc treo job quá lâu nếu có sự cố kẹt tiến trình
 
     strategy:
       matrix:
@@ -25,50 +26,71 @@ jobs:
 
       - name: 🔄 Update Salt Fileserver Cache from Git
         run: |
-          echo "📥 Updating Fileserver (States)..."
-          sudo salt-run fileserver.update
-          
-          echo "📥 Updating External Pillar (Variables)..."
-          sudo salt-run git_pillar.update
+          # Kiểm tra xem dịch vụ salt-master trên máy này có đang chạy không
+          if systemctl is-active --quiet salt-master; then
+            echo "📥 Updating Fileserver (States)..."
+            sudo salt-run fileserver.update
+            
+            echo "📥 Updating External Pillar (Variables)..."
+            sudo salt-run git_pillar.update
+          else
+            echo "⏭️ Dịch vụ salt-master KHÔNG chạy trên node này. Bỏ qua bước cập nhật cache để tránh lỗi."
+          fi
 
       - name: ⏳ Wait for GitFS Sync Completion
-        run: sleep 5
+        run: |
+          if systemctl is-active --quiet salt-master; then
+            sleep 5
+          fi
           
       - name: 🔋 Refresh Minions Pillar Cache
         run: |
-          echo "Kiểm tra xem Minion có đang kết nối tới Master này không..."
-          if sudo salt '*' test.ping -t 5 | grep -q "True"; then
-            echo "✅ Minion đang Active trên Node này. Tiến hành cập nhật cấu hình..."
-            sudo salt '*' saltutil.refresh_pillar -t 30
+          # Chỉ thực hiện nếu dịch vụ salt-master đang sống
+          if systemctl is-active --quiet salt-master; then
+            echo "Kiểm tra xem Minion có đang kết nối tới Master này không..."
+            if sudo salt '*' test.ping -t 5 | grep -q "True"; then
+              echo "✅ Minion đang Active trên Node này. Tiến hành cập nhật cấu hình..."
+              sudo salt '*' saltutil.refresh_pillar -t 30
+            else
+              echo "⏭️ Minion không phản hồi trên Node này (Đây là Passive Master). Bỏ qua bước Refresh."
+            fi
           else
-            echo "⏭️ Minion không phản hồi trên Node này (Đây là Passive Master). Bỏ qua bước Refresh."
+            echo "⏭️ Dịch vụ salt-master không hoạt động. Bỏ qua bước kiểm tra Minion."
           fi
 
       - name: 🚀 Continuous Deployment - Apply Nginx State
         run: |
-          if sudo salt '*' test.ping -t 5 | grep -q "True"; then
-            echo "Applying deployment..."
-            sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True -t 30
+          if systemctl is-active --quiet salt-master; then
+            if sudo salt '*' test.ping -t 5 | grep -q "True"; then
+              echo "Applying deployment..."
+              sudo salt '*' state.apply nginx saltenv=main pillarenv=main queue=True -t 30
+            else
+              echo "⏭️ Bỏ qua Apply State trên Passive Master."
+            fi
           else
-            echo "⏭️ Bỏ qua Apply State trên Passive Master."
+            echo "⏭️ Dịch vụ salt-master không hoạt động. Bỏ qua Apply State."
           fi
 
       - name: 🔄 Automatic Failback to Master 1 (Primary)
         run: |
-          CURRENT_HOST=$(hostname)
-          
-          if sudo salt '*' test.ping -t 5 | grep -q "True"; then
-            if [[ "$CURRENT_HOST" == *"master2"* ]] || [[ "$CURRENT_HOST" == *"node2"* ]]; then
-              echo "⚠️ Phát hiện đây là Master 2 (Dự phòng) nhưng đang gánh Minion!"
-              echo "⏳ Đang kiểm tra xem Master 1 (192.168.15.129) đã sống lại chưa..."
-              
-              if nc -z -w 3 192.168.15.129 4505; then
-                echo "🚀 Master 1 đã ONLINE trở lại!"
-                echo "🔄 Ra lệnh cho Minion tự restart ở chế độ chạy ngầm (bg=True) để quay về Master 1..."
-                sudo salt '*' cmd.run 'sleep 3 && systemctl restart salt-minion' bg=True
-                echo "✅ Đã phát lệnh Failback thành công. Minion sẽ về Master 1."
-              else
-                echo "⏭️ Master 1 vẫn đang sập. Giữ nguyên kết nối tại Master 2 để đảm bảo High Availability."
+          if systemctl is-active --quiet salt-master; then
+            CURRENT_HOST=$(hostname)
+            
+            if sudo salt '*' test.ping -t 5 | grep -q "True"; then
+              if [[ "$CURRENT_HOST" == *"master2"* ]] || [[ "$CURRENT_HOST" == *"node2"* ]]; then
+                echo "⚠️ Phát hiện đây là Master 2 (Dự phòng) nhưng đang gánh Minion!"
+                echo "⏳ Đang kiểm tra xem Master 1 (192.168.15.129) đã sống lại chưa..."
+                
+                if nc -z -w 3 192.168.15.129 4505; then
+                  echo "🚀 Master 1 đã ONLINE trở lại!"
+                  echo "🔄 Ra lệnh cho Minion tự restart ở chế độ chạy ngầm (bg=True) để quay về Master 1..."
+                  sudo salt '*' cmd.run 'sleep 3 && systemctl restart salt-minion' bg=True
+                  echo "✅ Đã phát lệnh Failback thành công. Minion sẽ về Master 1."
+                else
+                  echo "⏭️ Master 1 vẫn đang sập. Giữ nguyên kết nối tại Master 2 để đảm bảo High Availability."
+                fi
               fi
             fi
+          else
+            echo "⏭️ Dịch vụ salt-master không hoạt động. Không thể thực hiện Failback từ node này."
           fi
