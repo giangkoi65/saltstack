@@ -1,18 +1,20 @@
 beacons:
   inotify:
     - files:
-        /etc/nginx/nginx.conf:
+        /etc/nginx:
           mask:
             - close_write
             - moved_to
             - create
             - delete
-        /etc/nginx/sites-available/mysite.conf:
+          recurse: True
+        /etc/nginx/sites-available:
           mask:
             - close_write
             - moved_to
             - create
             - delete
+          recurse: True
         /var/www/mysite:
           mask:
             - close_write
