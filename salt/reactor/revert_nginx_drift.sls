@@ -1,4 +1,6 @@
-{% if 'change' in data and data['change'] == 'IN_CLOSE_WRITE' %}
+{% if 'change' in data %}
+
+  {% if data['change'] in ['IN_CLOSE_WRITE', 'IN_MOVED_TO', 'IN_CREATE', 'IN_DELETE'] %}
 
 trigger_nginx_state_recovery:
   local.state.apply:
@@ -10,4 +12,5 @@ trigger_nginx_state_recovery:
         pillarenv: main
         queue: True
 
+  {% endif %}
 {% endif %}
