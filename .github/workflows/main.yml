@@ -9,7 +9,7 @@ jobs:
   deploy-infrastructure:
     name: Sync and Apply Infrastructure State
     runs-on: ${{ matrix.target_master }}
-    timeout-minutes: 10 # <--- THÊM MỚI: Giới hạn thời gian chạy của Job chống treo vô hạn
+    timeout-minutes: 10
     strategy:
       fail-fast: false 
       matrix:
