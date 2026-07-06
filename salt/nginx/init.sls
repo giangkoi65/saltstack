@@ -13,7 +13,7 @@ nginx_package:
     - require:
       - cmd: repair_nginx_core_files
 
-# 2. DÂN CHUYÊN: Tự động quản lý và ép tạo lại toàn bộ Symlink Modules bằng Jinja Loop
+# 2. Tự động quản lý và ép tạo lại toàn bộ Symlink Modules bằng Jinja Loop
 {% for mod in ['50-mod-http-geoip2', '50-mod-http-image-filter', '50-mod-http-xslt-filter', '50-mod-mail', '50-mod-stream', '70-mod-stream-geoip2'] %}
 /etc/nginx/modules-enabled/{{ mod }}.conf:
   file.symlink:
