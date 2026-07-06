@@ -1,13 +1,23 @@
 repair_nginx_missing_core_files:
   cmd.run:
     - name: |
+        # 1. Thu thập danh sách các gói nginx đang có trên hệ thống
         PKGS=$(dpkg-query -f='${binary:Package} ${db:Status-Status}\n' -W '*nginx*' 2>/dev/null | grep ' installed' | cut -d' ' -f1)
         if [ -z "$PKGS" ]; then
           echo "Nginx chưa được cài đặt trên hệ thống. Bỏ qua bước sửa lỗi."
           exit 0
         fi
-        apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS && \
-        dpkg-reconfigure -fnoninteractive $PKGS
+        
+        # 2. Cài đặt lại để kéo toàn bộ file cấu hình tĩnh (.conf) về lại hệ thống
+        apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+        
+        # 3. Ép cấu hình gói core trước để chắc chắn thư mục /etc/nginx/modules-enabled được sinh ra
+        dpkg-reconfigure -fnoninteractive nginx-common
+        
+        # 4. Vòng lặp cấu hình cuốn chiếu từng gói một để các module nhận diện được thư mục và tạo symlink
+        for pkg in $PKGS; do
+          dpkg-reconfigure -fnoninteractive $pkg
+        done
     - onlyif: |
         [ ! -d /etc/nginx/modules-enabled ] || \
         [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ] || \
