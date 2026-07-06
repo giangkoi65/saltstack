@@ -1,7 +1,7 @@
 repair_nginx_missing_core_files:
   cmd.run:
     - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx-common nginx-core
-    - unless: test -f /etc/nginx/mime.types   # Chỉ chạy khi thấy file core (mime.types) biến mất
+    - onlyif: dpkg -V nginx-common nginx-core 2>&1 | grep -q 'missing'
     - order: 1                                # Phải chạy đầu tiên trước khi quản lý các file khác
 
 nginx_package:
