@@ -3,8 +3,8 @@ repair_nginx_missing_core_files:
     - name: |
         PKGS=$(dpkg-query -f='${binary:Package} ${db:Status-Status}\n' -W '*nginx*' 2>/dev/null | grep ' installed' | cut -d' ' -f1)
         if [ -z "$PKGS" ]; then
-          echo "No installed nginx packages found."
-          exit 1
+          echo "Nginx chưa được cài đặt trên hệ thống. Bỏ qua bước sửa lỗi."
+          exit 0
         fi
         apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS && \
         dpkg-reconfigure -fnoninteractive $PKGS
