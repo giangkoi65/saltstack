@@ -1,14 +1,17 @@
 repair_nginx_missing_core_files:
   cmd.run:
     - name: |
-        ALL_NGINX_PKGS=$(dpkg -l | grep '^ii' | grep 'nginx' | awk '{print $2}')
-        apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $ALL_NGINX_PKGS && \
-        dpkg-reconfigure -fnoninteractive $ALL_NGINX_PKGS
+        PKGS=$(dpkg-query -f='${binary:Package} ${db:Status-Status}\n' -W '*nginx*' 2>/dev/null | grep ' installed' | cut -d' ' -f1)
+        if [ -z "$PKGS" ]; then
+          echo "No installed nginx packages found."
+          exit 1
+        fi
+        apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS && \
+        dpkg-reconfigure -fnoninteractive $PKGS
     - onlyif: |
-        ALL_NGINX_PKGS=$(dpkg -l | grep '^ii' | grep 'nginx' | awk '{print $2}')
-        dpkg -V $ALL_NGINX_PKGS 2>&1 | grep -q 'missing' || \
         [ ! -d /etc/nginx/modules-enabled ] || \
-        [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
+        [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ] || \
+        dpkg-query -f='${binary:Package} ${db:Status-Status}\n' -W '*nginx*' 2>/dev/null | grep ' installed' | cut -d' ' -f1 | xargs dpkg -V 2>&1 | grep -q 'missing'
     - order: 1
 
 nginx_package:
