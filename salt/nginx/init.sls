@@ -1,13 +1,15 @@
 repair_nginx_missing_core_files:
   cmd.run:
     - name: |
-        apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx-common nginx-core && \
-        dpkg-reconfigure -fnoninteractive nginx-common nginx-core
+        ALL_NGINX_PKGS=$(dpkg -l | grep '^ii' | grep 'nginx' | awk '{print $2}')
+        apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $ALL_NGINX_PKGS && \
+        dpkg-reconfigure -fnoninteractive $ALL_NGINX_PKGS
     - onlyif: |
-        dpkg -V nginx-common nginx-core 2>&1 | grep -q 'missing' || \
+        ALL_NGINX_PKGS=$(dpkg -l | grep '^ii' | grep 'nginx' | awk '{print $2}')
+        dpkg -V $ALL_NGINX_PKGS 2>&1 | grep -q 'missing' || \
         [ ! -d /etc/nginx/modules-enabled ] || \
         [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
-    - order: 1                                # Phải chạy đầu tiên trước khi quản lý các file khác
+    - order: 1
 
 nginx_package:
   pkg.installed:
