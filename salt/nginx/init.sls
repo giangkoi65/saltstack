@@ -73,3 +73,10 @@ nginx_service:
       - file: /etc/nginx/nginx.conf
       - file: /etc/nginx/sites-available/mysite.conf
       - file: /etc/nginx/sites-enabled/mysite.conf
+
+refresh_beacons_watcher:
+  cmd.run:
+    - name: salt-call saltutil.refresh_beacons
+    - onchanges:
+      - cmd: repair_nginx_missing_core_files  # Chỉ kích hoạt khi có sự kiện khôi phục thư mục/file hệ thống xảy ra
+    - order: last                            # Luôn luôn chạy cuối cùng sau khi Nginx đã ổn định
