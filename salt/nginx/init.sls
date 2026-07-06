@@ -1,13 +1,14 @@
-nginx:
-  pkg.installed: []
-  service.running:
-    - enable: True
-    - reload: True
-    - watch:
-      - file: /etc/nginx/nginx.conf
-      - file: /etc/nginx/sites-available/mysite.conf
-      - file: /etc/nginx/sites-enabled/mysite.conf
-      - file: /etc/nginx/sites-enabled/default
+repair_nginx_missing_core_files:
+  cmd.run:
+    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx-common nginx-core
+    - unless: test -f /etc/nginx/mime.types   # Chỉ chạy khi thấy file core (mime.types) biến mất
+    - order: 1                                # Phải chạy đầu tiên trước khi quản lý các file khác
+
+nginx_package:
+  pkg.installed:
+    - name: nginx
+    - require:
+      - cmd: repair_nginx_missing_core_files
 
 /etc/nginx/nginx.conf:
   file.managed:
@@ -61,3 +62,14 @@ nginx:
     - target: /etc/nginx/sites-available/mysite.conf
     - require:
       - file: /etc/nginx/sites-available/mysite.conf
+
+nginx_service:
+  service.running:
+    - name: nginx
+    - enable: True
+    - reload: True   # THẦN CHÚ 1: Dùng reload để worker cũ xử lý nốt traffic, worker mới cập nhật cấu hình mới. Không làm rớt kết nối của user!
+    - sig: /usr/sbin/nginx # Giúp Salt nhận diện chính xác tiến trình Nginx đang chạy
+    - watch:
+      - file: /etc/nginx/nginx.conf
+      - file: /etc/nginx/sites-available/mysite.conf
+      - file: /etc/nginx/sites-enabled/mysite.conf
