@@ -29,6 +29,28 @@ repair_nginx_core_files:
         dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -qE 'missing|^\?\?5'
     - order: 1
 
+# Quản lý tối cao thư mục gốc /etc/nginx, xóa mọi file lạ trừ các file hệ thống mặc định
+manage_nginx_root_dir:
+  file.directory:
+    - name: /etc/nginx
+    - user: root
+    - group: root
+    - mode: 755
+    - clean: True
+    # exclude_pat dùng để liệt kê các file/thư mục mặc định của OS mà ông KHÔNG MUỐN Salt xóa bậy
+    - exclude_pat:
+      - 'mime.types'
+      - 'fastcgi_params'
+      - 'uwsgi_params'
+      - 'scgi_params'
+      - 'koi-win'
+      - 'koi-utf'
+      - 'win-utf'
+    - require:
+      - cmd: repair_nginx_core_files
+    - require_in:
+      - file: /etc/nginx/nginx.conf
+
 # 2. Quản lý thư mục trục cốt và QUÉT SẠCH FILE RÁC (Bổ sung clean: True toàn diện)
 /etc/nginx/conf.d:
   file.directory:
