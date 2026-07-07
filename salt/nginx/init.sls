@@ -1,8 +1,8 @@
-# 1. Khóa tay APT và Phục hồi Core Nginx diện rộng (Cả missing lẫn modified)
+# 1. Khóa tay APT và Khôi phục Tuyệt đối Core Nginx (Mất file hoặc Sửa nội dung file hệ thống)
 repair_nginx_core_files:
   cmd.run:
     - name: |
-        echo "🛑 Tạo Layer bảo vệ policy-rc.d để cấm APT tự ý Restart làm mất kết nối người dùng..."
+        echo "🛑 Tạo Layer bảo vệ policy-rc.d..."
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
 
@@ -11,21 +11,17 @@ repair_nginx_core_files:
           find /etc/nginx/sites-enabled/ -xtype l -delete
         fi
 
-        echo "📦 Tiến hành reinstall core packages của Nginx..."
+        echo "📦 Tiến hành cài đè phục hồi core packages của Nginx..."
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          # Sử dụng --force-confmiss để bù file mất, --force-confold để giữ file cũ nếu có xung đột nhẹ
+          # --force-confmiss: bù file mất | --force-confold: cài đè cấu hình mặc định nếu bị đổi
           apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
         fi
 
-        echo "🔓 Gỡ bỏ khóa policy-rc.d, trả lại quyền cho Salt quản lý tiến trình..."
+        echo "🔓 Gỡ bỏ khóa policy-rc.d..."
         rm -f /usr/sbin/policy-rc.d
+    # 🌟 FIX: Chỉ cần dpkg phát hiện mất file hoặc sửa file (trừ sites-enabled/default), chạy phục hồi ngay
     - onlyif: |
-        [ ! -f /etc/nginx/nginx.conf ] || \
-        [ ! -d /etc/nginx/modules-available ] || \
-        [ ! -d /etc/nginx/conf.d ] || \
-        [ ! -d /etc/nginx/sites-available ] || \
-        [ ! -d /etc/nginx/sites-enabled ] || \
         dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -qE 'missing|^\?\?5'
     - order: 1
 
@@ -37,7 +33,6 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
-    # Đã bao gồm toàn bộ file/thư mục hệ thống của ông qua lệnh tree
     - exclude_pat:
       - 'mime.types'
       - 'fastcgi.conf'
@@ -54,7 +49,7 @@ manage_nginx_root_dir:
     - require:
       - cmd: repair_nginx_core_files
 
-# 3. Quản lý thư mục con trục cốt và QUÉT SẠCH FILE RÁC (Được bảo vệ bởi thư mục mẹ)
+# 3. Quản lý thư mục con trục cốt và QUÉT SẠCH FILE RÁC
 /etc/nginx/conf.d:
   file.directory:
     - user: root
@@ -105,6 +100,7 @@ nginx_package:
       - service: nginx_service
 {% endfor %}
 
+# Quản lý file cấu hình tối cao nginx.conf
 /etc/nginx/nginx.conf:
   file.managed:
     - source: salt://nginx/files/nginx.conf
@@ -114,6 +110,20 @@ nginx_package:
     - require:
       - pkg: nginx_package
       - file: manage_nginx_root_dir
+
+# BỔ SUNG: Khóa chặt các file thông số nhạy cảm mà hacker hay lợi dụng để tiêm độc cấu hình
+{% for core_file in ['fastcgi.conf', 'fastcgi_params', 'koi-utf', 'koi-win', 'mime.types', 'proxy_params', 'scgi_params', 'uwsgi_params', 'win-utf'] %}
+/etc/nginx/{{ core_file }}:
+  file.managed:
+    - source: salt://nginx/files/{{ core_file }}
+    - user: root
+    - group: root
+    - mode: 644
+    - require:
+      - pkg: nginx_package
+    - watch_in:
+      - service: nginx_service
+{% endfor %}
 
 # 5. Quản lý Source Code Web và File Cấu Hình Site
 /var/www/mysite:
@@ -147,9 +157,9 @@ nginx_package:
     - target: /etc/nginx/sites-available/mysite.conf
     - require:
       - file: /etc/nginx/sites-enabled
-      - file: /etc/nginx/sites-available/mysite.conf  # Sửa lỗi: Phải chờ file conf gốc tạo xong
+      - file: /etc/nginx/sites-available/mysite.conf
 
-# 6. Kiểm soát Tiến trình Dịch vụ (Ép buộc Graceful Reload thay vì Restart)
+# 6. Kiểm soát Tiến trình Dịch vụ (Graceful Reload)
 nginx_service:
   service.running:
     - name: nginx
@@ -161,7 +171,7 @@ nginx_service:
         - file: /etc/nginx/sites-available/mysite.conf
         - file: /etc/nginx/sites-enabled/mysite.conf
 
-# 7. Luôn luôn nạp lại cấu hình Beacon ở cuối phiên để tránh mất dấu Watcher
+# 7. Luôn luôn nạp lại cấu hình Beacon ở cuối phiên
 refresh_beacons_watcher:
   cmd.run:
     - name: salt-call saltutil.refresh_beacons
