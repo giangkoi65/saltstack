@@ -24,21 +24,6 @@ ensure_nginx_directories:
     - require_in:
       - pkg: nginx_package
 
-# Ép Salt luôn đảm bảo thư mục conf.d phải tồn tại sạch sẽ
-ensure_nginx_directories:
-  file.directory:
-    - names:
-        - /etc/nginx/modules-available
-        - /etc/nginx/conf.d
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-    - require:
-      - cmd: repair_nginx_core_files
-    - require_in:
-      - pkg: nginx_package
-
 nginx_package:
   pkg.installed:
     - name: nginx
