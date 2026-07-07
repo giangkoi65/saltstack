@@ -149,3 +149,32 @@ refresh_beacons_watcher:
   cmd.run:
     - name: salt-call saltutil.refresh_beacons
     - order: last
+
+# ==============================================================================
+# 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
+# ==============================================================================
+purge_untracked_nginx_root_files:
+  cmd.run:
+    - name: |
+        echo "🔍 Đang quét và dọn dẹp cấu hình rác tại thư mục gốc /etc/nginx..."
+        
+        # 1. Lấy động danh sách các file hợp pháp do chính hệ thống (APT/DPKG) cài đặt tại gốc /etc/nginx
+        PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null | grep -E '^/etc/nginx/[^/]+$')
+        
+        # 2. Định nghĩa các file do chính bạn custom và quản lý qua Salt/Git
+        MY_FILES="/etc/nginx/nginx.conf"
+        
+        # Hợp nhất hai nguồn để tạo thành Whitelist chuẩn
+        WHITELIST=$(echo -e "${PKG_FILES}\n${MY_FILES}" | sort -u)
+        
+        # 3. Quét tất cả các file thực tế đang tồn tại ở thư mục gốc /etc/nginx (không quét sâu vào thư mục con)
+        find /etc/nginx -maxdepth 1 -type f | while read -r current_file; do
+          if ! echo "$WHITELIST" | grep -qxF "$current_file"; then
+            echo "🗑️ [ANTI-DRIFT] Phát hiện file lạ trái phép: $current_file -> Tiến hành XÓA!"
+            rm -f "$current_file"
+          fi
+        done
+    - require:
+      - cmd: repair_nginx_core_files
+      - file: /etc/nginx/nginx.conf
+    - order: 6  # Chạy sau khi các file cấu hình chính đã được Salt map xuống thành công
