@@ -19,6 +19,31 @@ ensure_modules_available_dir:
     - require_in:
       - pkg: nginx_package
 
+repair_nginx_core_files:
+  cmd.run:
+    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+    - onlyif: |
+        [ ! -f /etc/nginx/nginx.conf ] || \
+        [ ! -d /etc/nginx/modules-available ] || \
+        [ ! -d /etc/nginx/conf.d ] || \
+        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -q 'missing'
+    - order: 1
+
+# Ép Salt luôn đảm bảo thư mục conf.d phải tồn tại sạch sẽ
+ensure_nginx_directories:
+  file.directory:
+    - names:
+        - /etc/nginx/modules-available
+        - /etc/nginx/conf.d
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - require:
+      - cmd: repair_nginx_core_files
+    - require_in:
+      - pkg: nginx_package
+
 nginx_package:
   pkg.installed:
     - name: nginx
