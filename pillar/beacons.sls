@@ -5,6 +5,7 @@ beacons:
           mask:
             - close_write
             - moved_to
+            - moved_from
             - create
             - delete
             - delete_self
@@ -13,6 +14,7 @@ beacons:
           mask:
             - close_write
             - moved_to
+            - moved_from
             - create
             - delete
             - delete_self
