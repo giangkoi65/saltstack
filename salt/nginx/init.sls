@@ -21,7 +21,7 @@ repair_nginx_core_files:
     - order: 1
 
 # ==============================================================================
-# 2. ANTI-DRIFT: QUẢN LÝ THƯ MỤC MẸ VÀ THƯ MỤC CON (CHỈ DIỆT FILE LẠ)
+# 2. ANTI-DRIFT: QUẢN LÝ THƯ MỤC MẸ (🌟 SỬA ĐỔI EXCLUDE ĐỂ TRÁNH XÓA NHẦM)
 # ==============================================================================
 manage_nginx_root_dir:
   file.directory:
@@ -30,6 +30,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
+    # 🌟 FIX CHÍ MẠNG: Thêm dấu gạch chéo '/' phía sau tên thư mục để Salt biết đây là thư mục cần giữ lại, tránh xóa nhầm toàn bộ cấu trúc của OS
     - exclude_pat:
       - 'mime.types'
       - 'fastcgi.conf'
@@ -40,9 +41,12 @@ manage_nginx_root_dir:
       - 'koi-win'
       - 'koi-utf'
       - 'win-utf'
-      - 'modules-available'
-      - 'modules-enabled'
-      - 'snippets'
+      - 'conf.d/'
+      - 'sites-available/'
+      - 'sites-enabled/'
+      - 'modules-available/'
+      - 'modules-enabled/'
+      - 'snippets/'
     - require:
       - cmd: repair_nginx_core_files
 
@@ -63,7 +67,7 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
-    - exclude_pat: 'default' # 🌟 Loại trừ để không xung đột lúc dọn dẹp thư mục mẹ
+    - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
 
@@ -74,11 +78,10 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
-    - exclude_pat: 'default' # 🌟 FIX: Bổ sung loại trừ để tránh bị lỗi phân tích cú pháp khi APT vừa sinh ra file default
+    - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
 
-# 🌟 BỔ SUNG: Khai tử file default của APT một cách chủ động để giải phóng port 80
 remove_nginx_default_sites:
   file.absent:
     - names:
@@ -145,7 +148,7 @@ nginx_package:
     - require:
       - file: /etc/nginx/sites-enabled
       - file: /etc/nginx/sites-available/mysite.conf
-      - file: remove_nginx_default_sites # Đảm bảo file default đã bị xóa hoàn toàn trước khi kích hoạt site mới
+      - file: remove_nginx_default_sites
 
 # ==============================================================================
 # 5. ĐIỀU KHIỂN TIẾN TRÌNH DỊCH VỤ
