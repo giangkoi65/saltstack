@@ -1,8 +1,6 @@
 # ==============================================================================
 # 1. KHÔI PHỤC CORE TUYỆT ĐỐI BẰNG PACKAGE MANAGER (UPDATE-SAFE)
 # ==============================================================================
-# Nếu hacker sửa đổi HOẶC xóa bất kỳ file hệ thống nào (mime.types, fastcgi_params...)
-# Lệnh dpkg -V sẽ phát hiện sai lệch và ép APT cài đè lại file nguyên bản của ĐÚNG phiên bản đó.
 repair_nginx_core_files:
   cmd.run:
     - name: |
@@ -13,8 +11,9 @@ repair_nginx_core_files:
         echo "📦 Tiến hành cài đè hoàn nguyên file hệ thống từ Package gốc..."
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          # --force-confmiss: bù file mất | --force-confold: giữ cấu hình cũ nếu có xung đột, ưu tiên file hệ thống sạch
-          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+          # 🌟 FIX: Bổ sung "-o Dpkg::Options::='--force-confnew'" 
+          # Cờ này ép APT bắt buộc phải lôi file cấu hình nguyên bản của gói cài đặt ra đè lên các file bị sửa đổi
+          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -o Dpkg::Options::="--force-confnew" -y $PKGS
         fi
 
         echo "🔓 Mở khóa policy-rc.d..."
