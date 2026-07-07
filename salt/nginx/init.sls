@@ -37,15 +37,20 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
-    # exclude_pat dùng để liệt kê các file/thư mục mặc định của OS mà ông KHÔNG MUỐN Salt xóa bậy
+    # exclude_pat chuẩn hóa dựa trên cây thư mục thực tế của Ubuntu/Debian
     - exclude_pat:
       - 'mime.types'
+      - 'fastcgi.conf'
       - 'fastcgi_params'
+      - 'proxy_params'
       - 'uwsgi_params'
       - 'scgi_params'
       - 'koi-win'
       - 'koi-utf'
       - 'win-utf'
+      - 'modules-available'
+      - 'modules-enabled'
+      - 'snippets'
     - require:
       - cmd: repair_nginx_core_files
     - require_in:
