@@ -1,6 +1,6 @@
 {% if 'change' in data %}
 
-  {% if data['change'] in ['IN_CLOSE_WRITE', 'IN_MOVED_TO', 'IN_CREATE', 'IN_DELETE'] %}
+  {% if data['change'] in ['close_write', 'moved_to', 'create', 'delete'] %}
 
 trigger_nginx_state_recovery:
   local.state.apply:
