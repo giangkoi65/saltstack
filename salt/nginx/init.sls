@@ -30,7 +30,6 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
-    # 🌟 FIX CHÍ MẠNG: Thêm dấu gạch chéo '/' phía sau tên thư mục để Salt biết đây là thư mục cần giữ lại, tránh xóa nhầm toàn bộ cấu trúc của OS
     - exclude_pat:
       - 'mime.types'
       - 'fastcgi.conf'
@@ -46,7 +45,7 @@ manage_nginx_root_dir:
       - 'sites-enabled/'
       - 'modules-available/'
       - 'modules-enabled/'
-      - 'snippets/'
+      - 'snippets*'
     - require:
       - cmd: repair_nginx_core_files
 
@@ -157,8 +156,6 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True
-    - sig: /usr/sbin/nginx 
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
