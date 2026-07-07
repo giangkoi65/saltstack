@@ -1,24 +1,4 @@
-# 1. Khôi phục lại các file cấu hình tĩnh cơ bản của Nginx nếu bị xóa sạch
-repair_nginx_core_files:
-  cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx-common nginx-core
-    - onlyif: |
-        [ ! -f /etc/nginx/nginx.conf ] || \
-        dpkg -V nginx-common nginx-core 2>&1 | grep -q 'missing'
-    - order: 1
-
-ensure_modules_available_dir:
-  file.directory:
-    - name: /etc/nginx/modules-available
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-    - require:
-      - cmd: repair_nginx_core_files
-    - require_in:
-      - pkg: nginx_package
-
+# Thêm kiểm tra thư mục conf.d vào onlyif và khai báo file.directory
 repair_nginx_core_files:
   cmd.run:
     - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
@@ -28,6 +8,21 @@ repair_nginx_core_files:
         [ ! -d /etc/nginx/conf.d ] || \
         dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -q 'missing'
     - order: 1
+
+# Ép Salt luôn đảm bảo thư mục conf.d phải tồn tại sạch sẽ
+ensure_nginx_directories:
+  file.directory:
+    - names:
+        - /etc/nginx/modules-available
+        - /etc/nginx/conf.d
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - require:
+      - cmd: repair_nginx_core_files
+    - require_in:
+      - pkg: nginx_package
 
 # Ép Salt luôn đảm bảo thư mục conf.d phải tồn tại sạch sẽ
 ensure_nginx_directories:
