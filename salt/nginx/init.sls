@@ -33,7 +33,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
-    # 🌟 SỬA TẠI ĐÂY: Chuyển từ định dạng List sang chuỗi Regex chuẩn để bảo vệ toàn bộ tệp core của OS
+    # 🌟 ĐÃ SỬA: Chuyển danh sách thành một chuỗi kí tự Regex gộp bằng toán tử '|'
     - exclude_pat: '(mime\.types|fastcgi\.conf|fastcgi_params|proxy_params|uwsgi_params|scgi_params|koi-win|koi-utf|win-utf|modules-available|modules-enabled|snippets)'
     - require:
       - cmd: repair_nginx_core_files
@@ -132,7 +132,7 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    # 🌟 SỬA TẠI ĐÂY: Loại bỏ "- reload: True" để ép Salt luôn dùng "restart", an toàn tuyệt đối khi khôi phục từ trạng thái tắt
+    # 🌟 ĐÃ SỬA: Loại bỏ hoàn toàn dòng "- reload: True" để chuyển sang cơ chế restart an toàn
     - sig: /usr/sbin/nginx 
     - watch:
         - file: /etc/nginx/nginx.conf
