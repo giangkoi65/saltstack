@@ -11,8 +11,6 @@ repair_nginx_core_files:
         echo "📦 Tiến hành cài đè hoàn nguyên file hệ thống từ Package gốc..."
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          # 🌟 FIX: Bổ sung "-o Dpkg::Options::='--force-confnew'" 
-          # Cờ này ép APT bắt buộc phải lôi file cấu hình nguyên bản của gói cài đặt ra đè lên các file bị sửa đổi
           apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -o Dpkg::Options::="--force-confnew" -y $PKGS
         fi
 
@@ -32,7 +30,6 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
-    # Doanh nghiệp chỉ liệt kê các file/thư mục mặc định của OS để Salt KHÔNG XÓA nhầm khi dọn rác
     - exclude_pat:
       - 'mime.types'
       - 'fastcgi.conf'
@@ -66,7 +63,7 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
-    - exclude_pat: 'default'
+    - exclude_pat: 'default' # 🌟 Loại trừ để không xung đột lúc dọn dẹp thư mục mẹ
     - require:
       - file: manage_nginx_root_dir
 
@@ -77,8 +74,21 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
+    - exclude_pat: 'default' # 🌟 FIX: Bổ sung loại trừ để tránh bị lỗi phân tích cú pháp khi APT vừa sinh ra file default
     - require:
       - file: manage_nginx_root_dir
+
+# 🌟 BỔ SUNG: Khai tử file default của APT một cách chủ động để giải phóng port 80
+remove_nginx_default_sites:
+  file.absent:
+    - names:
+      - /etc/nginx/sites-available/default
+      - /etc/nginx/sites-enabled/default
+    - require:
+      - file: /etc/nginx/sites-available
+      - file: /etc/nginx/sites-enabled
+    - watch_in:
+      - service: nginx_service
 
 nginx_package:
   pkg.installed:
@@ -135,6 +145,7 @@ nginx_package:
     - require:
       - file: /etc/nginx/sites-enabled
       - file: /etc/nginx/sites-available/mysite.conf
+      - file: remove_nginx_default_sites # Đảm bảo file default đã bị xóa hoàn toàn trước khi kích hoạt site mới
 
 # ==============================================================================
 # 5. ĐIỀU KHIỂN TIẾN TRÌNH DỊCH VỤ
