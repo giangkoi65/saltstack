@@ -1,7 +1,13 @@
-# 1. Sửa onlyif để LOẠI TRỪ file 'default' đã chủ động xóa
+# 1. Tự động tìm và diệt Symlink hỏng trước khi ép APT Reinstall
 repair_nginx_core_files:
   cmd.run:
     - name: |
+        echo "Đang quét và dọn dẹp các Symlink bị hỏng để tránh làm crash APT..."
+        if [ -d /etc/nginx/sites-enabled ]; then
+          find /etc/nginx/sites-enabled/ -xtype l -delete
+        fi
+
+        echo "Tiến hành reinstall core packages của Nginx..."
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
           apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
