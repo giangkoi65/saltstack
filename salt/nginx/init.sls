@@ -115,6 +115,4 @@ nginx_service:
 refresh_beacons_watcher:
   cmd.run:
     - name: salt-call saltutil.refresh_beacons
-    - onchanges:
-      - cmd: repair_nginx_core_files  
     - order: last
