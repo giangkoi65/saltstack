@@ -10,10 +10,10 @@ repair_nginx_core_files:
 
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          echo "🧹 Tự động tìm và XÓA SẠCH các file hệ thống đã bị hacker sửa đổi..."
+          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi (trừ default)..."
           dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | awk '{print $NF}' | xargs rm -f
 
-          echo "📦 Tiến hành cài bù hoàn nguyên file sạch từ Package gốc..."
+          echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
           apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
         fi
 
@@ -24,7 +24,7 @@ repair_nginx_core_files:
     - order: 1
 
 # ==============================================================================
-# 2. ANTI-DRIFT: QUẢN LÝ THƯ MỤC MẸ VÀ THƯ MỤC CON (CHỈ DIỆT FILE LẠ)
+# 2. ANTI-DRIFT CHUẨN: CHỈ DỌN DẸP NƠI CHỨA CẤU HÌNH ỨNG DỤNG
 # ==============================================================================
 manage_nginx_root_dir:
   file.directory:
@@ -32,9 +32,7 @@ manage_nginx_root_dir:
     - user: root
     - group: root
     - mode: 755
-    - clean: True
-    # 🌟 ĐÃ SỬA: Chuyển danh sách thành một chuỗi kí tự Regex gộp bằng toán tử '|'
-    - exclude_pat: '(mime\.types|fastcgi\.conf|fastcgi_params|proxy_params|uwsgi_params|scgi_params|koi-win|koi-utf|win-utf|modules-available|modules-enabled|snippets)'
+    # ✨ ĐÃ SỬA: Loại bỏ hoàn toàn "clean: True" và "exclude_pat" tại đây để bảo vệ các file mặc định của hệ thống
     - require:
       - cmd: repair_nginx_core_files
 
@@ -44,7 +42,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
     - require:
       - file: manage_nginx_root_dir
 
@@ -54,7 +52,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
     - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
@@ -65,7 +63,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file cấu hình lén kích hoạt
     - require:
       - file: manage_nginx_root_dir
 
@@ -76,7 +74,7 @@ nginx_package:
       - cmd: repair_nginx_core_files
 
 # ==============================================================================
-# 3. QUẢN LÝ CONFIG TRỤC CỐT DƯỚI DẠNG TEMPLATE JINJA ĐỘC LẬP
+# 3. QUẢN LÝ CONFIG TRỤC CỐT DƯỚI DẠNG TEMPLATE JINJA
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -132,7 +130,6 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    # 🌟 ĐÃ SỬA: Loại bỏ hoàn toàn dòng "- reload: True" để chuyển sang cơ chế restart an toàn
     - sig: /usr/sbin/nginx 
     - watch:
         - file: /etc/nginx/nginx.conf
