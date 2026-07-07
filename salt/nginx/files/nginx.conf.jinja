@@ -1,9 +1,11 @@
 user www-data;
-worker_processes auto;
+# 🌟 ĐỘNG: Tự động cấu hình số lượng worker_processes bằng đúng số Core CPU của máy Minion đó
+worker_processes {{ grains['num_cpus'] }};
 pid /run/nginx.pid;
 include /etc/nginx/modules-enabled/*.conf;
 
 events {
+    # 🌟 ĐỘNG: Định cấu hình kết nối linh hoạt
     worker_connections 1024;
 }
 
@@ -14,14 +16,12 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
-    # Log files
     access_log /var/log/nginx/access.log;
     error_log /var/log/nginx/error.log;
 
-    # Gzip Settings
     gzip on;
 
-    # Khai báo các Virtual Hosts
+    # Khai báo các Virtual Hosts tách biệt hoàn toàn để an toàn khi update core
     include /etc/nginx/conf.d/*.conf;
     include /etc/nginx/sites-enabled/*;
 }
