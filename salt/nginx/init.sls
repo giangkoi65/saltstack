@@ -1,7 +1,13 @@
 # Thêm kiểm tra thư mục conf.d vào onlyif và khai báo file.directory
 repair_nginx_core_files:
   cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+    - name: |
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        if [ -n "$PKGS" ]; then
+          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+        else
+          echo "Nginx chưa được cài đặt, bỏ qua bước phục hồi core."
+        fi
     - onlyif: |
         [ ! -f /etc/nginx/nginx.conf ] || \
         [ ! -d /etc/nginx/modules-available ] || \
