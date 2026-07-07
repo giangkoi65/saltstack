@@ -46,6 +46,16 @@ manage_nginx_root_dir:
     - require:
       - file: manage_nginx_root_dir
 
+/etc/nginx/modules-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True
+    - require:
+      - file: manage_nginx_root_dir
+
 /etc/nginx/sites-available:
   file.directory:
     - user: root
@@ -86,6 +96,30 @@ nginx_package:
     - require:
       - pkg: nginx_package
       - file: manage_nginx_root_dir
+
+/etc/nginx/proxy_params:
+  file.managed:
+    - user: root
+    - group: root
+    - mode: 644
+    - contents: |
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    - require:
+      - pkg: nginx_package
+
+/etc/nginx/fastcgi_params:
+  file.managed:
+    - user: root
+    - group: root
+    - mode: 644
+    - contents: |
+        # Ông có thể copy nội dung file fastcgi_params mặc định vào đây để quản lý tập trung
+        # Đảm bảo hacker có sửa file này thì Salt cũng đè lại ngay lập tức.
+    - require:
+      - pkg: nginx_package
 
 # ==============================================================================
 # 4. QUẢN LÝ APP/SITE CONFIGURATION
