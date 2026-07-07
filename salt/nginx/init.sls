@@ -8,20 +8,23 @@ repair_nginx_core_files:
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
 
-        echo "📦 Tiến hành cài đè hoàn nguyên file hệ thống từ Package gốc..."
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -o Dpkg::Options::="--force-confnew" -y $PKGS
+          echo "🧹 Tự động tìm và XÓA SẠCH các file hệ thống đã bị hacker sửa đổi..."
+          dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | awk '{print $NF}' | xargs rm -f
+
+          echo "📦 Tiến hành cài bù hoàn nguyên file sạch từ Package gốc..."
+          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
         fi
 
         echo "🔓 Mở khóa policy-rc.d..."
         rm -f /usr/sbin/policy-rc.d
     - onlyif: |
-        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -qE 'missing|^\?\?5'
+        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -q .
     - order: 1
 
 # ==============================================================================
-# 2. ANTI-DRIFT: QUẢN LÝ THƯ MỤC MẸ (🌟 SỬA ĐỔI EXCLUDE ĐỂ TRÁNH XÓA NHẦM)
+# 2. ANTI-DRIFT: QUẢN LÝ THƯ MỤC MẸ VÀ THƯ MỤC CON (CHỈ DIỆT FILE LẠ)
 # ==============================================================================
 manage_nginx_root_dir:
   file.directory:
@@ -30,22 +33,8 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - clean: True
-    - exclude_pat:
-      - 'mime.types'
-      - 'fastcgi.conf'
-      - 'fastcgi_params'
-      - 'proxy_params'
-      - 'uwsgi_params'
-      - 'scgi_params'
-      - 'koi-win'
-      - 'koi-utf'
-      - 'win-utf'
-      - 'conf.d/'
-      - 'sites-available/'
-      - 'sites-enabled/'
-      - 'modules-available/'
-      - 'modules-enabled/'
-      - 'snippets*'
+    # 🌟 SỬA TẠI ĐÂY: Chuyển từ định dạng List sang chuỗi Regex chuẩn để bảo vệ toàn bộ tệp core của OS
+    - exclude_pat: '(mime\.types|fastcgi\.conf|fastcgi_params|proxy_params|uwsgi_params|scgi_params|koi-win|koi-utf|win-utf|modules-available|modules-enabled|snippets)'
     - require:
       - cmd: repair_nginx_core_files
 
@@ -77,20 +66,8 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
-    - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
-
-remove_nginx_default_sites:
-  file.absent:
-    - names:
-      - /etc/nginx/sites-available/default
-      - /etc/nginx/sites-enabled/default
-    - require:
-      - file: /etc/nginx/sites-available
-      - file: /etc/nginx/sites-enabled
-    - watch_in:
-      - service: nginx_service
 
 nginx_package:
   pkg.installed:
@@ -147,7 +124,6 @@ nginx_package:
     - require:
       - file: /etc/nginx/sites-enabled
       - file: /etc/nginx/sites-available/mysite.conf
-      - file: remove_nginx_default_sites
 
 # ==============================================================================
 # 5. ĐIỀU KHIỂN TIẾN TRÌNH DỊCH VỤ
@@ -156,6 +132,8 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
+    # 🌟 SỬA TẠI ĐÂY: Loại bỏ "- reload: True" để ép Salt luôn dùng "restart", an toàn tuyệt đối khi khôi phục từ trạng thái tắt
+    - sig: /usr/sbin/nginx 
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
