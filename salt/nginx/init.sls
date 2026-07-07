@@ -1,4 +1,4 @@
-# Thêm kiểm tra thư mục conf.d vào onlyif và khai báo file.directory
+# 1. Sửa onlyif để LOẠI TRỪ file 'default' đã chủ động xóa
 repair_nginx_core_files:
   cmd.run:
     - name: |
@@ -12,15 +12,19 @@ repair_nginx_core_files:
         [ ! -f /etc/nginx/nginx.conf ] || \
         [ ! -d /etc/nginx/modules-available ] || \
         [ ! -d /etc/nginx/conf.d ] || \
-        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -q 'missing'
+        [ ! -d /etc/nginx/sites-available ] || \
+        [ ! -d /etc/nginx/sites-enabled ] || \
+        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep 'missing' | grep -v 'sites-enabled/default' -q
     - order: 1
 
-# Ép Salt luôn đảm bảo thư mục conf.d phải tồn tại sạch sẽ
+# 2. Đảm bảo tất cả các thư mục trục cốt phải tồn tại sạch sẽ
 ensure_nginx_directories:
   file.directory:
     - names:
         - /etc/nginx/modules-available
         - /etc/nginx/conf.d
+        - /etc/nginx/sites-available
+        - /etc/nginx/sites-enabled
     - user: root
     - group: root
     - mode: 755
@@ -36,7 +40,6 @@ nginx_package:
     - require:
       - cmd: repair_nginx_core_files
 
-# 2. Tự động quản lý và ép tạo lại toàn bộ Symlink Modules bằng Jinja Loop
 {% for mod in ['50-mod-http-geoip2', '50-mod-http-image-filter', '50-mod-http-xslt-filter', '50-mod-mail', '50-mod-stream', '70-mod-stream-geoip2'] %}
 /etc/nginx/modules-enabled/{{ mod }}.conf:
   file.symlink:
@@ -57,13 +60,11 @@ nginx_package:
     - require:
       - pkg: nginx
 
-# Gỡ bỏ Virtual Host mặc định của Nginx để tránh xung đột port 80
 /etc/nginx/sites-enabled/default:
   file.absent:
     - require:
       - pkg: nginx
 
-# Tạo thư mục chứa mã nguồn website trên Minion
 /var/www/mysite:
   file.directory:
     - user: root
@@ -73,7 +74,6 @@ nginx_package:
     - require:
       - pkg: nginx
 
-# Đẩy file nội dung index.html xuống Minion
 /var/www/mysite/index.html:
   file.managed:
     - source: salt://nginx/files/index.html
@@ -83,7 +83,7 @@ nginx_package:
     - require:
       - file: /var/www/mysite
 
-# Quản lý file cấu hình Virtual Host trong sites-available
+# 3. Bổ sung makedirs cho file cấu hình site
 /etc/nginx/sites-available/mysite.conf:
   file.managed:
     - source: salt://nginx/files/mysite.conf.jinja
@@ -91,13 +91,15 @@ nginx_package:
     - user: root
     - group: root
     - mode: 644
+    - makedirs: True
     - require:
       - pkg: nginx
 
-# Tạo Symbolic Link trong sites-enabled để kích hoạt website
+# 4. Bổ sung makedirs cho symlink kích hoạt site
 /etc/nginx/sites-enabled/mysite.conf:
   file.symlink:
     - target: /etc/nginx/sites-available/mysite.conf
+    - makedirs: True
     - require:
       - file: /etc/nginx/sites-available/mysite.conf
 
