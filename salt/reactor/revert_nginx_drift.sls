@@ -1,11 +1,11 @@
 # Kiểm tra nếu có biến 'change' trong dữ liệu sự kiện
 {% if 'change' in data %}
 
-  # Chuyển tất cả về chữ viết thường để tránh lệch pha giữa các phiên bản Salt/OS
-  {% set change_type = data['change'] | lower %}
+  # Ép kiểu về string và viết thường để check chuỗi con chính xác 100%
+  {% set change_str = data['change'] | string | lower %}
 
-  # Kiểm tra nếu chuỗi chứa các từ khóa phá hoại/thay đổi cấu hình
-  {% if 'delete' in change_type or 'create' in change_type or 'moved' in change_type or 'write' in change_type %}
+  # Kiểm tra nếu chuỗi chứa bất kỳ hành động thay đổi cấu hình nào
+  {% if 'delete' in change_str or 'create' in change_str or 'moved' in change_str or 'write' in change_str %}
 
 trigger_nginx_state_recovery:
   local.state.apply:
