@@ -124,3 +124,14 @@ refresh_beacons_watcher:
   cmd.run:
     - name: salt-call saltutil.refresh_beacons
     - order: last
+
+# Quét sạch các file lạ không được khai báo trong conf.d để tránh injection phá cấu hình
+/etc/nginx/conf.d:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True # <--- Cực kỳ quan trọng: Xóa sạch sành sanh mọi file rác lọt vào đây mà không có trong State
+    - require:
+      - cmd: repair_nginx_core_files
