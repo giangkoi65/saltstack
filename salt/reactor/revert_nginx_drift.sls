@@ -1,6 +1,11 @@
+# Kiểm tra nếu có biến 'change' trong dữ liệu sự kiện
 {% if 'change' in data %}
 
-  {% if data['change'] in ['close_write', 'moved_to', 'create', 'delete', 'delete_self'] %}
+  # Chuyển tất cả về chữ viết thường để tránh lệch pha giữa các phiên bản Salt/OS
+  {% set change_type = data['change'] | lower %}
+
+  # Kiểm tra nếu chuỗi chứa các từ khóa phá hoại/thay đổi cấu hình
+  {% if 'delete' in change_type or 'create' in change_type or 'moved' in change_type or 'write' in change_type %}
 
 trigger_nginx_state_recovery:
   local.state.apply:
