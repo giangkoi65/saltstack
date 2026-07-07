@@ -7,6 +7,18 @@ repair_nginx_core_files:
         dpkg -V nginx-common nginx-core 2>&1 | grep -q 'missing'
     - order: 1
 
+ensure_modules_available_dir:
+  file.directory:
+    - name: /etc/nginx/modules-available
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - require:
+      - cmd: repair_nginx_core_files
+    - require_in:
+      - pkg: nginx_package
+
 nginx_package:
   pkg.installed:
     - name: nginx
