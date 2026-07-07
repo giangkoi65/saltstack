@@ -9,14 +9,6 @@ beacons:
             - delete
             - delete_self
           recurse: True
-        /etc/nginx/sites-available:
-          mask:
-            - close_write
-            - moved_to
-            - create
-            - delete
-            - delete_self
-          recurse: True
         /var/www/mysite:
           mask:
             - close_write
