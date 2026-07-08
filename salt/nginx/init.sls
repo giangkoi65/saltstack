@@ -1,5 +1,5 @@
 # ==============================================================================
-# 1. TỰ ĐỘNG PHÁT HIỆN SỰ CỐ (SỬA/XÓA/MV) VÀ CÀI LẠI SẠCH TỪ KHÔ GỐC (APT)
+# 1. PHÁT HIỆN SỰ CỐ (SỬA/XÓA/MV CẢ FILE THƯỜNG & CONFFILES) VÀ CÀI LẠI SẠCH TỪ APT
 # ==============================================================================
 repair_nginx_core_files:
   cmd.run:
@@ -10,24 +10,56 @@ repair_nginx_core_files:
 
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         
-        echo "⚠️ Phát hiện cấu hình core bị can thiệp (Sửa/Xóa/Di chuyển)!"
-        echo "🧹 Tiến hành tải và cài đặt lại sạch hoàn toàn từ APT Repository..."
+        echo "⚠️ Phát hiện cấu hình hệ thống bị can thiệp trái phép!"
+        echo "🧹 Tiến hành dọn dẹp và ép buộc tái cài đặt sạch từ APT Repository..."
         
-        # --force-confnew: Ghi đè cấu hình mặc định lên các file đã bị chỉnh sửa
-        # --force-confmiss: Cài bù lại hoàn toàn các file đã bị xóa hoặc di chuyển (mv)
+        # --force-confnew: Ghi đè cấu hình gốc của package lên các file đã bị sửa đổi
+        # --force-confmiss: Cài bù lại hoàn toàn các cấu hình hệ thống đã bị xóa hoặc di chuyển (mv)
         apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y $PKGS
 
         echo "🔓 Mở khóa policy-rc.d..."
         rm -f /usr/sbin/policy-rc.d
     - onlyif: |
-        # Bộ lọc thông minh sử dụng dpkg -V để phát hiện mọi thay đổi cấu trúc/nội dung
-        # Loại trừ tuyệt đối các file vhost và cấu hình do Salt quản lý để tránh xung đột lặp lại
-        dpkg -V nginx nginx-common nginx-core 2>/dev/null | grep '/etc/nginx/' | grep -vE '(/etc/nginx/nginx\.conf|/etc/nginx/sites-available/mysite\.conf|/etc/nginx/sites-enabled/|/etc/nginx/sites-available/default)'
+        # Kịch bản quét kép: Đảm bảo phát hiện mọi biến động mà không cần file backup độc lập
+
+        # Bước A: Kiểm tra các file thông thường qua tệp tin .md5sums
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        for pkg in $PKGS; do
+          MD5_SUMS_FILE="/var/lib/dpkg/info/${pkg}.md5sums"
+          if [ -f "$MD5_SUMS_FILE" ]; then
+            while read -r target_md5 target_file; do
+              if [[ "$target_file" == etc/nginx/* ]]; then
+                full_path="/$target_file"
+                if [[ "$full_path" == "/etc/nginx/nginx.conf" || "$full_path" == "/etc/nginx/sites-available/mysite.conf" || "$full_path" == "/etc/nginx/sites-enabled/"* || "$full_path" == "/etc/nginx/sites-available/default" ]]; then
+                  continue
+                fi
+                if [ ! -f "$full_path" ]; then exit 0; fi
+                current_md5=$(md5sum "$full_path" | awk '{print $1}')
+                if [ "$current_md5" != "$target_md5" ]; then exit 0; fi
+              fi
+            done < "$MD5_SUMS_FILE"
+          fi
+        done
+
+        # Bước B: Kiểm tra nghiêm ngặt nhóm Conffiles (mime.types, fastcgi_params...) bằng DB gốc của DPKG
+        awk '/^Package: .*nginx.*/ {p=1; next} /^Package:/ {p=0} p && /^Conffiles:/ {c=1; next} c && /^ / {print $1, $2} c && !/^ / {c=0}' /var/lib/dpkg/status | while read -r file expected_md5; do
+          if [[ "$file" == "/etc/nginx/nginx.conf" || "$file" == "/etc/nginx/sites-available/mysite.conf" || "$file" == "/etc/nginx/sites-enabled/"* || "$file" == "/etc/nginx/sites-available/default" ]]; then
+            continue
+          fi
+          if [ ! -f "$file" ]; then exit 0; fi
+          current_md5=$(md5sum "$file" | awk '{print $1}')
+          if [ "$current_md5" != "$expected_md5" ]; then exit 0; fi
+        done
+
+        # Bước C: Kiểm tra quyền hạn sở hữu (ATTRIB)
+        if [ $(find /etc/nginx -not -user root -o -not -group root | wc -l) -gt 0 ]; then exit 0; fi
+
+        exit 1
     - shell: /bin/bash
     - order: 1
 
 # ==============================================================================
-# 2. KHÓA CHẶT THƯ MỤC CẤU HÌNH VÀ DIỆT FILE LẠ (ĐÃ SỬA LỖI EXCLUDE_PAT)
+# 2. KHÓA CHẶT THƯ MỤC CẤU HÌNH VÀ DIỆT FILE LẠ
 # ==============================================================================
 manage_nginx_root_dir:
   file.directory:
@@ -65,7 +97,6 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True 
-    # ĐÃ SỬA: Gom thành 1 chuỗi Regex để Salt không nhận diện nhầm làm xóa file vhost
     - exclude_pat: '.*(default|mysite\.conf)$'
     - require:
       - file: manage_nginx_root_dir
@@ -77,7 +108,6 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True 
-    # ĐÃ SỬA: Đưa về định dạng chuỗi Regex chuẩn
     - exclude_pat: '.*mysite\.conf$'
     - require:
       - file: manage_nginx_root_dir
@@ -86,106 +116,4 @@ nginx_package:
   pkg.installed:
     - name: nginx
     - require:
-      - cmd: repair_nginx_core_files
-
-# ==============================================================================
-# 3. QUẢN LÝ FILE TRỤC CỐT (ÁP TEMPLATE ĐÈ LÊN SAU KHI ĐÃ LÀM SẠCH HỆ THỐNG)
-# ==============================================================================
-/etc/nginx/nginx.conf:
-  file.managed:
-    - source: salt://nginx/files/nginx.conf.jinja
-    - template: jinja
-    - user: root
-    - group: root
-    - mode: 644
-    - require:
-      - pkg: nginx_package
-      - file: manage_nginx_root_dir
-
-/etc/nginx/sites-available/mysite.conf:
-  file.managed:
-    - source: salt://nginx/files/mysite.conf.jinja
-    - template: jinja
-    - user: root
-    - group: root
-    - mode: 644
-    - require:
-      - file: /etc/nginx/sites-available
-
-/etc/nginx/sites-enabled/mysite.conf:
-  file.symlink:
-    - target: /etc/nginx/sites-available/mysite.conf
-    - require:
-      - file: /etc/nginx/sites-enabled
-      - file: /etc/nginx/sites-available/mysite.conf
-
-# ==============================================================================
-# 4. QUÉT SẠCH THƯ MỤC RÁC THỪA NGOÀI DANH SÁCH
-# ==============================================================================
-purge_untracked_nginx_root_files:
-  cmd.run:
-    - name: |
-        echo "🔍 Đang rà quét và quét sạch mọi thành phần lạ tại /etc/nginx..."
-        PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null)
-        
-        WHITELIST=$(cat << EOF
-        /etc/nginx
-        /etc/nginx/nginx.conf
-        /etc/nginx/sites-available/mysite.conf
-        /etc/nginx/sites-enabled/mysite.conf
-        EOF
-        )
-        ALL_WHITELIST=$(echo -e "${PKG_FILES}\n${WHITELIST}" | sort -u)
-
-        find /etc/nginx -mindepth 1 | sort -r | while read -r item; do
-          if [[ "$item" == "/etc/nginx/conf.d"* || "$item" == "/etc/nginx/modules-enabled"* || "$item" == "/etc/nginx/sites-available"* || "$item" == "/etc/nginx/sites-enabled"* ]]; then
-            continue
-          fi
-          
-          if ! echo "$ALL_WHITELIST" | grep -qxF "$item"; then
-            echo "🗑️ [ANTI-DRIFT] Xóa thành phần lạ: $item"
-            rm -rf "$item"
-          fi
-        done
-    - shell: /bin/bash
-    - require:
-      - cmd: repair_nginx_core_files
-      - file: /etc/nginx/nginx.conf
-    - order: 6
-
-# ==============================================================================
-# 5. KHỞI ĐỘNG DỊCH VỤ VÀ WATCHER BEACONS
-# ==============================================================================
-/var/www/mysite:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-
-/var/www/mysite/index.html:
-  file.managed:
-    - source: salt://nginx/files/index.html
-    - user: root
-    - group: root
-    - mode: 644
-    - require:
-      - file: /var/www/mysite
-
-nginx_service:
-  service.running:
-    - name: nginx
-    - enable: True
-    - sig: /usr/sbin/nginx
-    - watch:
-        - file: /etc/nginx/nginx.conf
-        - file: /etc/nginx/sites-available/mysite.conf
-        - file: /etc/nginx/sites-enabled/mysite.conf
-
-refresh_beacons_watcher:
-  cmd.run:
-    - name: salt-call saltutil.refresh_beacons
-    - order: last
-    - onchanges:
-      - cmd: repair_nginx_core_files
-      - file: manage_nginx_root_dir
+      - cmd:
