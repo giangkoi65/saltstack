@@ -39,6 +39,7 @@ restore_nginx_core:
     - require:
       - cmd: disable_apt_restart
 
+# 🔥 SỬA ĐỔI: Phân loại module và gán số thứ tự tải (50- / 70-) để tránh lỗi dependency
 restore_nginx_modules:
   cmd.run:
     - name: |
@@ -52,6 +53,19 @@ restore_nginx_modules:
         if [ -d "$SRC_DIR" ]; then
           for f in "$SRC_DIR"/*.conf; do
             if [ -f "$f" ]; then
+              # Chuẩn hóa loại bỏ số cũ nếu có
+              BNAME=$(basename "$f" | sed 's/^[0-9]*-//')
+              
+              # Phân chia mức độ ưu tiên
+              case "$BNAME" in
+                mod-stream.conf|mod-mail.conf|mod-http*.conf)
+                  PREFIX="50-"
+                  ;;
+                *)
+                  PREFIX="70-"
+                  ;;
+              esac
+              
               SO_PATH=$(awk '/load_module/ {gsub(/[";]/, "", $2); print $2}' "$f")
               if [ -n "$SO_PATH" ]; then
                 case "$SO_PATH" in
@@ -59,7 +73,7 @@ restore_nginx_modules:
                   *) SO_PATH="/usr/lib/nginx/$SO_PATH" ;;
                 esac
                 if [ -f "$SO_PATH" ]; then
-                  ln -sf "$f" "/etc/nginx/modules-enabled/$(basename "$f")"
+                  ln -sf "$f" "/etc/nginx/modules-enabled/${PREFIX}${BNAME}"
                 fi
               fi
             fi
