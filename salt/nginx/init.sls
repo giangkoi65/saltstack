@@ -1,5 +1,5 @@
 # ==============================================================================
-# 1. KHÔI PHỤC CORE TUYỆT ĐỐI BẰNG PACKAGE MANAGER (UPDATE-SAFE)
+# 1. KHÔI PHỤC CORE TUYỆT ĐỐI BẰNG PACKAGE MANAGER (BẬC THẦY IDEMPOTENT)
 # ==============================================================================
 repair_nginx_core_files:
   cmd.run:
@@ -14,17 +14,18 @@ repair_nginx_core_files:
           dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | awk '{print $NF}' | xargs rm -f
 
           echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
-          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+          apt-get install --reinstall -o Dpkg::Options::=\"--force-confmiss\" -y $PKGS
         fi
 
         echo "🔓 Mở khóa policy-rc.d..."
         rm -f /usr/sbin/policy-rc.d
+    # 🔥 SỬA LỖI 2: Chỉ kích hoạt re-install nếu thư mục gốc mất HOẶC file hệ thống bị sửa (Bỏ qua nginx.conf)
     - onlyif: |
-        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -q .
-    - order: 1
+        [ ! -d /etc/nginx ] || dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v -E 'sites-enabled/default|nginx.conf' | grep -q .
+    - order: 1 # Đảm bảo chạy đầu tiên để kiểm tra nền tảng
 
 # ==============================================================================
-# 2. ANTI-DRIFT CHUẨN: CHỈ DỌN DẸP NƠI CHỨA CẤU HÌNH ỨNG DỤNG
+# 2. ANTI-DRIFT CHUẨN: KHỞI TẠO VÀ DỌN DẸP NƠI CHỨA CẤU HÌNH ỨNG DỤNG
 # ==============================================================================
 manage_nginx_root_dir:
   file.directory:
@@ -32,6 +33,7 @@ manage_nginx_root_dir:
     - user: root
     - group: root
     - mode: 755
+    # SỬA LỖI 1: Đi theo đường thẳng, Thư mục gốc yêu cầu bước kiểm tra core phải xong trước
     - require:
       - cmd: repair_nginx_core_files
 
@@ -41,7 +43,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # Diệt file lạ
+    - clean: True
     - require:
       - file: manage_nginx_root_dir
 
@@ -61,7 +63,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
+    - clean: True
     - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
@@ -72,7 +74,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file cấu hình lén kích hoạt
+    - clean: True
     - require:
       - file: manage_nginx_root_dir
 
@@ -145,31 +147,26 @@ nginx_service:
         - file: /etc/nginx/sites-available/mysite.conf
         - file: /etc/nginx/sites-enabled/mysite.conf
 
+# ==============================================================================
+# 6. TÁI SINH LẠI BEACON - CHỈ CHẠY KHI THƯ MỤC GỐC BỊ HACKER XÓA SẠCH
+# ==============================================================================
 refresh_beacons_watcher:
   cmd.run:
     - name: salt-call saltutil.refresh_beacons
-    - order: last
     - onchanges:
-      - file: /etc/nginx
+      - file: manage_nginx_root_dir
 
 # ==============================================================================
-# 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
+# 7. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
 # ==============================================================================
 purge_untracked_nginx_root_files:
   cmd.run:
     - name: |
         echo "🔍 Đang quét và dọn dẹp cấu hình rác tại thư mục gốc /etc/nginx..."
-        
-        # 1. Lấy động danh sách các file hợp pháp do chính hệ thống (APT/DPKG) cài đặt tại gốc /etc/nginx
         PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null | grep -E '^/etc/nginx/[^/]+$')
-        
-        # 2. Định nghĩa các file do chính bạn custom và quản lý qua Salt/Git
         MY_FILES="/etc/nginx/nginx.conf"
-        
-        # Hợp nhất hai nguồn để tạo thành Whitelist chuẩn
         WHITELIST=$(echo -e "${PKG_FILES}\n${MY_FILES}" | sort -u)
         
-        # 3. Quét tất cả các file thực tế đang tồn tại ở thư mục gốc /etc/nginx (không quét sâu vào thư mục con)
         find /etc/nginx -maxdepth 1 -type f | while read -r current_file; do
           if ! echo "$WHITELIST" | grep -qxF "$current_file"; then
             echo "🗑️ [ANTI-DRIFT] Phát hiện file lạ trái phép: $current_file -> Tiến hành XÓA!"
@@ -179,4 +176,4 @@ purge_untracked_nginx_root_files:
     - require:
       - cmd: repair_nginx_core_files
       - file: /etc/nginx/nginx.conf
-    - order: 6  # Chạy sau khi các file cấu hình chính đã được Salt map xuống thành công
+    - order: last # SỬA LỖI 3: Đẩy xuống cuối cùng, sau khi mọi cấu hình hợp pháp đã được an vị
