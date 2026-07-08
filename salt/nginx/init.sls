@@ -1,47 +1,5 @@
 # ==============================================================================
-# 1. PHÁT HIỆN & HOÀN NGUYÊN FILE CORE (BỊ XÓA HOẶC BỊ SỬA - CLOSE_WRITE/ATTRIB)
-# ==============================================================================
-disable_apt_restart:
-  cmd.run:
-    - name: |
-        echo "exit 101" > /usr/sbin/policy-rc.d
-        chmod +x /usr/sbin/policy-rc.d
-    - onlyif: |
-        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
-    - order: 1
-
-restore_nginx_core:
-  cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
-    - onlyif: |
-        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
-    - require:
-      - cmd: disable_apt_restart
-
-# 🔥 SỬA ĐỔI: Chỉ tạo lại liên kết cho các module chuẩn, an toàn, đi kèm gói cài đặt mặc định
-restore_nginx_modules:
-  cmd.run:
-    - name: |
-        mkdir -p /etc/nginx/modules-enabled
-        for mod in 50-mod-http-ndk 50-mod-http-passenger 50-mod-mail 50-mod-stream; do
-          if [ -f "/usr/share/nginx/modules-available/${mod}.conf" ]; then
-            ln -sf "/usr/share/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
-          elif [ -f "/etc/nginx/modules-available/${mod}.conf" ]; then
-            ln -sf "/etc/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
-          fi
-        done
-    - onlyif: '[ ! -d /etc/nginx/modules-enabled ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
-    - require:
-      - cmd: restore_nginx_core
-
-enable_apt_restart:
-  cmd.run:
-    - name: rm -f /usr/sbin/policy-rc.d
-    - onchanges:
-      - cmd: disable_apt_restart
-
-# ==============================================================================
-# 2. TỰ ĐỘNG TRUY QUÉT VÀ XÓA FILE LẠ THÊM MỚI (CREATE/MOVED_TO)
+# 1. TỰ ĐỘNG DIỆT FILE LẠ THÊM MỚI (CREATE/MOVED_TO) - CHẠY ĐẦU TIÊN
 # ==============================================================================
 purge_untracked_nginx_files:
   cmd.run:
@@ -60,7 +18,48 @@ purge_untracked_nginx_files:
           fi
         done
         find /etc/nginx -type d -empty -not -path /etc/nginx -delete
+    - order: 1
+
+# ==============================================================================
+# 2. PHÁT HIỆN & HOÀN NGUYÊN FILE CORE BỊ SAI LỆCH (CLOSE_WRITE/DELETE/ATTRIB)
+# ==============================================================================
+disable_apt_restart:
+  cmd.run:
+    - name: |
+        echo "exit 101" > /usr/sbin/policy-rc.d
+        chmod +x /usr/sbin/policy-rc.d
+    - onlyif: |
+        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - order: 2
+
+restore_nginx_core:
+  cmd.run:
+    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
+    - onlyif: |
+        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
+    - require:
+      - cmd: disable_apt_restart
+
+# Dọn sạch mọi symlink lỗi trong modules-enabled và chỉ nạp module an toàn
+restore_nginx_modules:
+  cmd.run:
+    - name: |
+        mkdir -p /etc/nginx/modules-enabled
+        rm -rf /etc/nginx/modules-enabled/*
+        for mod in 50-mod-http-ndk 50-mod-http-passenger 50-mod-mail 50-mod-stream; do
+          if [ -f "/usr/share/nginx/modules-available/${mod}.conf" ]; then
+            ln -sf "/usr/share/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
+          elif [ -f "/etc/nginx/modules-available/${mod}.conf" ]; then
+            ln -sf "/etc/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
+          fi
+        done
+    - order: 3
+
+enable_apt_restart:
+  cmd.run:
+    - name: rm -f /usr/sbin/policy-rc.d
+    - onchanges:
+      - cmd: disable_apt_restart
 
 # ==============================================================================
 # 3. ĐẢM BẢO CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST LUÔN TỒN TẠI
