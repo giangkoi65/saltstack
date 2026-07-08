@@ -25,20 +25,28 @@ disable_apt_restart:
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
     - onlyif: |
-        if [ ! -d /etc/nginx ]; then exit 0; fi
-        # 🔥 THAY ĐỔI: Quét toàn bộ file của gói core, không giới hạn trong /etc/nginx/
+        # 🔥 THAY ĐỔI: Kiểm tra xem gói có bị xóa hoàn toàn khỏi hệ thống không
+        for pkg in nginx nginx-common nginx-core; do
+          if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+            exit 0
+          fi
+        done
+        # Nếu gói tồn tại, kiểm tra xem có file nào bị thay đổi nội dung/bị xóa mất không
         dpkg --verify nginx nginx-common nginx-core 2>/dev/null | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: purge_untracked_nginx_files
 
 restore_nginx_core:
   cmd.run:
-    # 🔥 THAY ĐỔI: Thêm nginx-core và thực hiện daemon-reload để cập nhật lại file dịch vụ cho Systemd
     - name: |
         apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common nginx-core
         systemctl daemon-reload
     - onlyif: |
-        if [ ! -d /etc/nginx ]; then exit 0; fi
+        for pkg in nginx nginx-common nginx-core; do
+          if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+            exit 0
+          fi
+        done
         dpkg --verify nginx nginx-common nginx-core 2>/dev/null | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: disable_apt_restart
