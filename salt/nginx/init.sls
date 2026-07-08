@@ -40,19 +40,34 @@ restore_nginx_core:
     - require:
       - cmd: disable_apt_restart
 
-# Dọn sạch mọi symlink lỗi trong modules-enabled và chỉ nạp module an toàn
+# 🔥 SỬA ĐỒI GỐC: Tự động khôi phục chuẩn xác mọi symlink module có sẵn trong hệ thống
 restore_nginx_modules:
   cmd.run:
     - name: |
         mkdir -p /etc/nginx/modules-enabled
-        rm -rf /etc/nginx/modules-enabled/*
-        for mod in 50-mod-http-ndk 50-mod-http-passenger 50-mod-mail 50-mod-stream; do
-          if [ -f "/usr/share/nginx/modules-available/${mod}.conf" ]; then
-            ln -sf "/usr/share/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
-          elif [ -f "/etc/nginx/modules-available/${mod}.conf" ]; then
-            ln -sf "/etc/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
-          fi
-        done
+        # Tìm thư mục chứa module gốc (tùy phiên bản Ubuntu cấu trúc có thể ở /usr/share hoặc /etc)
+        SRC_DIR=""
+        if [ -d /usr/share/nginx/modules-available ]; then
+          SRC_DIR="/usr/share/nginx/modules-available"
+        elif [ -d /etc/nginx/modules-available ]; then
+          SRC_DIR="/etc/nginx/modules-available"
+        fi
+        
+        if [ -n "$SRC_DIR" ]; then
+          # 1. Quét ngược: Xóa các symlink trong modules-enabled nếu file gốc tương ứng không còn tồn tại
+          find /etc/nginx/modules-enabled/ -type l | while read -r sym; do
+            if [ ! -f "$SRC_DIR/$(basename "$sym")" ]; then
+              rm -f "$sym"
+            fi
+          done
+          
+          # 2. Khôi phục: Tạo lại tất cả các symlink từ các file cấu hình module chính thống hiện có
+          for f in "$SRC_DIR"/*.conf; do
+            if [ -f "$f" ]; then
+              ln -sf "$f" "/etc/nginx/modules-enabled/$(basename "$f")"
+            fi
+          done
+        fi
     - order: 3
 
 enable_apt_restart:
