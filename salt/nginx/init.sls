@@ -1,25 +1,24 @@
 # ==============================================================================
-# 1. TỰ ĐỘNG PHÁT HIỆN VÀ HOÀN NGUYÊN TOÀN BỘ FILE CORE BỊ SAI LỆCH (ANY MASK)
+# 1. PHÁT HIỆN & HOÀN NGUYÊN FILE CORE (BỊ XÓA HOẶC BỊ SỬA - CLOSE_WRITE/ATTRIB)
 # ==============================================================================
 disable_apt_restart:
   cmd.run:
     - name: |
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
-    # 🔥 THAY ĐỔI CỐT LÕI: Tự động quét toàn bộ /etc/nginx, bỏ qua các file bạn tự quản lý bằng template
     - onlyif: |
         dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - order: 1
 
 restore_nginx_core:
   cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
+    # SỬA LỖI 1: Thêm --force-confnew để ép đè toàn bộ các file bị SỬA về mặc định
+    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
     - onlyif: |
         dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: disable_apt_restart
 
-# Khôi phục lại các liên kết ảo của module hệ thống nếu thư mục trống hoặc bị xóa mất
 restore_nginx_modules:
   cmd.run:
     - name: |
@@ -40,7 +39,29 @@ enable_apt_restart:
       - cmd: disable_apt_restart
 
 # ==============================================================================
-# 2. ĐẢM BẢO CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST LUÔN TỒN TẠI
+# 2. SỬA LỖI 2: TỰ ĐỘNG TRUY QUÉT VÀ XÓA FILE LẠ THÊM MỚI (CREATE/MOVED_TO)
+# ==============================================================================
+purge_untracked_nginx_files:
+  cmd.run:
+    - name: |
+        find /etc/nginx -type f -o -type l | while read -r f; do
+          if ! dpkg -S "$f" >/dev/null 2>&1; then
+            case "$f" in
+              /etc/nginx/sites-available/mysite.conf|/etc/nginx/sites-enabled/mysite.conf)
+                ;;
+              /etc/nginx/modules-enabled/*)
+                ;;
+              *)
+                rm -f "$f"
+                ;;
+            esac
+          fi
+        done
+        find /etc/nginx -type d -empty -not -path /etc/nginx -delete
+    - order: 2
+
+# ==============================================================================
+# 3. ĐẢM BẢO CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST LUÔN TỒN TẠI
 # ==============================================================================
 /etc/nginx/sites-available:
   file.directory:
@@ -63,9 +84,8 @@ remove_default_vhost:
       - file: /etc/nginx/sites-enabled
 
 # ==============================================================================
-# 3. QUẢN LÝ CÁC FILE CẤU HÌNH TÙY BIẾN THEO TEMPLATE (GHI ĐÈ NẾU SAI LỆCH)
+# 4. QUẢN LÝ CÁC FILE CẤU HÌNH TÙY BIẾN THEO TEMPLATE (GHI ĐÈ NẾU SAI LỆCH)
 # ==============================================================================
-# Salt tự động kiểm tra nội dung (close_write), quyền hạn (attrib), mất file (delete) cho các block này
 /etc/nginx/nginx.conf:
   file.managed:
     - source: salt://nginx/files/nginx.conf.jinja
@@ -92,7 +112,7 @@ remove_default_vhost:
       - file: /etc/nginx/sites-available/mysite.conf
 
 # ==============================================================================
-# 4. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
+# 5. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
 # ==============================================================================
 /var/www/mysite:
   file.directory:
