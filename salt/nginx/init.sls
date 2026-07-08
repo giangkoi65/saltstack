@@ -1,54 +1,71 @@
 # ==============================================================================
-# 1. CHẶN APT RESTART VÀ HOÀN NGUYÊN CORE CỦA HỆ THỐNG (CÓ ĐIỀU KIỆN CHẶN LOOP)
+# 1. TỰ ĐỘNG PHÁT HIỆN VÀ HOÀN NGUYÊN TOÀN BỘ FILE CORE BỊ SAI LỆCH (ANY MASK)
 # ==============================================================================
 disable_apt_restart:
   cmd.run:
     - name: |
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
-    # 🔥 CHỈ CHẠY khi thực sự phát hiện mất file core (mime.types mất HOẶC thư mục modules bị trống)
+    # 🔥 THAY ĐỔI CỐT LÕI: Tự động quét toàn bộ /etc/nginx, bỏ qua các file bạn tự quản lý bằng template
     - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
+        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - order: 1
 
 restore_nginx_core:
   cmd.run:
     - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
     - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
+        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: disable_apt_restart
 
-# 🔥 SỬA LỖI MODULES: Tự động kéo lại các liên kết ảo sang module gốc nếu thư mục trống
+# Khôi phục lại các liên kết ảo của module hệ thống nếu thư mục trống hoặc bị xóa mất
 restore_nginx_modules:
   cmd.run:
     - name: |
-        echo "Đang khôi phục các liên kết modules ảo..."
+        mkdir -p /etc/nginx/modules-enabled
         if [ -d /usr/share/nginx/modules-available ]; then
           ln -sf /usr/share/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
         elif [ -d /etc/nginx/modules-available ]; then
           ln -sf /etc/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
         fi
-    - onlyif: '[ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
+    - onlyif: '[ ! -d /etc/nginx/modules-enabled ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
     - require:
       - cmd: restore_nginx_core
 
 enable_apt_restart:
   cmd.run:
     - name: rm -f /usr/sbin/policy-rc.d
-    # Chỉ dọn dẹp policy nếu bước chặn phía trên thực sự có chạy
     - onchanges:
       - cmd: disable_apt_restart
+
+# ==============================================================================
+# 2. ĐẢM BẢO CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST LUÔN TỒN TẠI
+# ==============================================================================
+/etc/nginx/sites-available:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/sites-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
 
 remove_default_vhost:
   file.absent:
     - name: /etc/nginx/sites-enabled/default
     - require:
-      - cmd: restore_nginx_core
+      - file: /etc/nginx/sites-enabled
 
 # ==============================================================================
-# 2. ÁP DỤNG CẤU HÌNH TÙY BIẾN TỪ TEMPLATE JINJA
+# 3. QUẢN LÝ CÁC FILE CẤU HÌNH TÙY BIẾN THEO TEMPLATE (GHI ĐÈ NẾU SAI LỆCH)
 # ==============================================================================
+# Salt tự động kiểm tra nội dung (close_write), quyền hạn (attrib), mất file (delete) cho các block này
 /etc/nginx/nginx.conf:
   file.managed:
     - source: salt://nginx/files/nginx.conf.jinja
@@ -56,8 +73,6 @@ remove_default_vhost:
     - user: root
     - group: root
     - mode: 644
-    - require:
-      - cmd: restore_nginx_core
 
 /etc/nginx/sites-available/mysite.conf:
   file.managed:
@@ -67,16 +82,17 @@ remove_default_vhost:
     - group: root
     - mode: 644
     - require:
-      - cmd: restore_nginx_core
+      - file: /etc/nginx/sites-available
 
 /etc/nginx/sites-enabled/mysite.conf:
   file.symlink:
     - target: /etc/nginx/sites-available/mysite.conf
     - require:
+      - file: /etc/nginx/sites-enabled
       - file: /etc/nginx/sites-available/mysite.conf
 
 # ==============================================================================
-# 3. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
+# 4. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
 # ==============================================================================
 /var/www/mysite:
   file.directory:
@@ -98,7 +114,7 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True 
+    - reload: True
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
