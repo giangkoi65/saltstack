@@ -1,6 +1,3 @@
-# ==============================================================================
-# 1. SỬA CHỮA CORE FILES - CHỈ CHẠY KHI THỰC SỰ CÓ FILE BỊ HỎNG/MẤT
-# ==============================================================================
 repair_nginx_core_files:
   cmd.run:
     - name: |
@@ -10,8 +7,9 @@ repair_nginx_core_files:
 
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi (trừ default)..."
-          dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | awk '{print $NF}' | xargs rm -f
+          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi..."
+          # 🔥 SỬA TẠI ĐÂY: Thêm nginx.conf vào danh sách loại trừ bằng grep -vE
+          dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | awk '{print $NF}' | xargs rm -f
 
           echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
           apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
@@ -19,10 +17,10 @@ repair_nginx_core_files:
 
         echo "🔓 Mở khóa policy-rc.d..."
         rm -f /usr/sbin/policy-rc.d
-    # 🌟 ĐIỀU KIỆN QUYẾT ĐỊNH: Chỉ chạy script này nếu dpkg -V phát hiện có sự sai lệch file
     - onlyif: |
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
-        dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | grep -q .
+        # 🔥 SỬA TẠI ĐÂY: Thêm nginx.conf vào onlyif để tránh trigger oan
+        dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | grep -q .
     - order: 1
 
 # ==============================================================================
@@ -63,8 +61,8 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
-    - exclude_pat: 'default'
+    - clean: True 
+    - exclude_pat: '(default|mysite.conf)' # Loại trừ default và mysite.conf
     - require:
       - file: manage_nginx_root_dir
 
@@ -74,7 +72,8 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file cấu hình lén kích hoạt
+    - clean: True 
+    - exclude_pat: 'mysite.conf' # Chặn việc xóa nhầm symlink của mysite.conf
     - require:
       - file: manage_nginx_root_dir
 
