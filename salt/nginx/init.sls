@@ -19,16 +19,22 @@ restore_nginx_core:
     - require:
       - cmd: disable_apt_restart
 
-# 🔥 SỬA LỖI MODULES: Tự động kéo lại các liên kết ảo sang module gốc nếu thư mục trống
+# 🔥 SỬA LẠI ĐOẠN NÀY CHO AN TOÀN TRUYỆT ĐỐI
 restore_nginx_modules:
   cmd.run:
     - name: |
-        echo "Đang khôi phục các liên kết modules ảo..."
-        if [ -d /usr/share/nginx/modules-available ]; then
-          ln -sf /usr/share/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
-        elif [ -d /etc/nginx/modules-available ]; then
-          ln -sf /etc/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
-        fi
+        echo "Đang khôi phục các liên kết modules ảo an toàn..."
+        # Duyệt qua các file cấu hình module gốc nếu có
+        for target_dir in /usr/share/nginx/modules-available /etc/nginx/modules-available; do
+          if [ -d "$target_dir" ]; then
+            for file in "$target_dir"/*.conf; do
+              # Kiểm tra chắc chắn file có tồn tại thực tế (tránh lỗi globbing dấu *)
+              if [ -e "$file" ]; then
+                ln -sf "$file" /etc/nginx/modules-enabled/
+              fi
+            done
+          fi
+        done
     - onlyif: '[ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
     - require:
       - cmd: restore_nginx_core
