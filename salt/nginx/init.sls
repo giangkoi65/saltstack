@@ -1,48 +1,45 @@
 # ==============================================================================
-# 1. CHẶN APT RESTART VÀ HOÀN NGUYÊN CORE CỦA HỆ THỐNG (CÓ ĐIỀU KIỆN CHẶN LOOP)
+# 1. TỰ ĐỘNG KHÔI PHỤC KHI CẤU HÌNH NGINX BỊ LỖI CÚ PHÁP HOẶC MẤT FILE CORE
 # ==============================================================================
 disable_apt_restart:
   cmd.run:
     - name: |
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
-    # 🔥 CHỈ CHẠY khi thực sự phát hiện mất file core (mime.types mất HOẶC thư mục modules bị trống)
-    - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
+    # 🔥 CHẠY KHI: Cấu hình Nginx lỗi (nginx -t trả về lỗi) HOẶC file core mime.types bị mất
+    - unless: nginx -t && [ -f /etc/nginx/mime.types ]
     - order: 1
 
 restore_nginx_core:
   cmd.run:
     - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
-    - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
+    - unless: nginx -t && [ -f /etc/nginx/mime.types ]
     - require:
       - cmd: disable_apt_restart
 
-# 🔥 SỬA LẠI ĐOẠN NÀY CHO AN TOÀN TRUYỆT ĐỐI
 restore_nginx_modules:
   cmd.run:
     - name: |
-        echo "Đang khôi phục các liên kết modules ảo an toàn..."
-        # Duyệt qua các file cấu hình module gốc nếu có
+        echo "Dọn dẹp file rác và nối lại modules sạch..."
+        # Xóa file lỗi *.conf nếu có
+        rm -f /etc/nginx/modules-enabled/*.conf 2>/dev/null
+        rm -f /etc/nginx/modules-enabled/\*.conf 2>/dev/null
+        
+        # Tạo lại liên kết chuẩn
         for target_dir in /usr/share/nginx/modules-available /etc/nginx/modules-available; do
           if [ -d "$target_dir" ]; then
             for file in "$target_dir"/*.conf; do
-              # Kiểm tra chắc chắn file có tồn tại thực tế (tránh lỗi globbing dấu *)
-              if [ -e "$file" ]; then
-                ln -sf "$file" /etc/nginx/modules-enabled/
-              fi
+              if [ -e "$file" ]; then ln -sf "$file" /etc/nginx/modules-enabled/; fi
             done
           fi
         done
-    - onlyif: '[ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
+    - unless: nginx -t
     - require:
       - cmd: restore_nginx_core
 
 enable_apt_restart:
   cmd.run:
     - name: rm -f /usr/sbin/policy-rc.d
-    # Chỉ dọn dẹp policy nếu bước chặn phía trên thực sự có chạy
     - onchanges:
       - cmd: disable_apt_restart
 
