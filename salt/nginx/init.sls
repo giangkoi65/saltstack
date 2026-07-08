@@ -4,15 +4,17 @@
 purge_untracked_nginx_files:
   cmd.run:
     - name: |
-        find /etc/nginx \( -type f -o -type l \) | while read -r f; do
-          if [ "$f" = "/etc/nginx/nginx.conf" ] || [ "$f" = "/etc/nginx/sites-available/mysite.conf" ] || [ "$f" = "/etc/nginx/sites-enabled/mysite.conf" ]; then
-            continue
-          fi
-          if ! dpkg -S "$f" >/dev/null 2>&1; then
-            rm -f "$f"
-          fi
-        done
-        find /etc/nginx -type d -empty -not -path /etc/nginx -delete
+        if [ -d /etc/nginx ]; then
+          find /etc/nginx \( -type f -o -type l \) | while read -r f; do
+            if [ "$f" = "/etc/nginx/nginx.conf" ] || [ "$f" = "/etc/nginx/sites-available/mysite.conf" ] || [ "$f" = "/etc/nginx/sites-enabled/mysite.conf" ]; then
+              continue
+            fi
+            if ! dpkg -S "$f" >/dev/null 2>&1; then
+              rm -f "$f"
+            fi
+          done
+          find /etc/nginx -type d -empty -not -path /etc/nginx -delete
+        fi
 
 # ==============================================================================
 # 2. PHÁT HIỆN & ÉP BUỘC HOÀN NGUYÊN FILE HỆ THỐNG BỊ SỬA ĐỔI/MẤT
@@ -23,6 +25,7 @@ disable_apt_restart:
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
     - onlyif: |
+        if [ ! -d /etc/nginx ]; then exit 0; fi
         dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: purge_untracked_nginx_files
@@ -31,11 +34,11 @@ restore_nginx_core:
   cmd.run:
     - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
     - onlyif: |
+        if [ ! -d /etc/nginx ]; then exit 0; fi
         dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: disable_apt_restart
 
-# Khôi phục các module hợp lệ bằng giải pháp loại bỏ hoàn toàn dấu nháy đơn lồng nhau
 restore_nginx_modules:
   cmd.run:
     - name: |
