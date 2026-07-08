@@ -7,12 +7,19 @@ repair_nginx_core_files:
 
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi..."
-          # 🔥 SỬA TẠI ĐÂY: Thêm nginx.conf vào danh sách loại trừ bằng grep -vE
-          dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | awk '{print $NF}' | xargs rm -f
+          # 🔥 CẢI TIẾN: Lấy danh sách file thực sự bị drift trước
+          DRIFTED_FILES=$(dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | awk '{print $NF}')
+          
+          if [ -n "$DRIFTED_FILES" ]; then
+            echo "⚠️ [ANTI-DRIFT] Phát hiện file hệ thống bị thay đổi: $DRIFTED_FILES"
+            echo "🧹 Tiến hành xóa các file lỗi..."
+            echo "$DRIFTED_FILES" | xargs rm -f
 
-          echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
-          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+            echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
+            apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+          else
+            echo "✅ Cấu hình core sạch sẽ, không phát hiện drift. Bỏ qua reinstall để tránh loop!"
+          fi
         fi
 
         echo "🔓 Mở khóa policy-rc.d..."
