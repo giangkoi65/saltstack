@@ -35,7 +35,7 @@ restore_nginx_core:
     - require:
       - cmd: disable_apt_restart
 
-# Lọc và chỉ tạo liên kết cho các module có file thực thi .so tồn tại trên ổ đĩa
+# Khôi phục các module hợp lệ bằng giải pháp loại bỏ hoàn toàn dấu nháy đơn lồng nhau
 restore_nginx_modules:
   cmd.run:
     - name: |
@@ -49,11 +49,12 @@ restore_nginx_modules:
         if [ -d "$SRC_DIR" ]; then
           for f in "$SRC_DIR"/*.conf; do
             if [ -f "$f" ]; then
-              SO_PATH=$(awk '/load_module/ {print $2}' "$f" | tr -d '"\';')
+              SO_PATH=$(awk '/load_module/ {gsub(/[";]/, "", $2); print $2}' "$f")
               if [ -n "$SO_PATH" ]; then
-                if [[ "$SO_PATH" != /* ]]; then
-                  SO_PATH="/usr/lib/nginx/$SO_PATH"
-                fi
+                case "$SO_PATH" in
+                  /*) ;;
+                  *) SO_PATH="/usr/lib/nginx/$SO_PATH" ;;
+                esac
                 if [ -f "$SO_PATH" ]; then
                   ln -sf "$f" "/etc/nginx/modules-enabled/$(basename "$f")"
                 fi
