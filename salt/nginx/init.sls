@@ -12,22 +12,24 @@ disable_apt_restart:
 
 restore_nginx_core:
   cmd.run:
-    # SỬA LỖI 1: Thêm --force-confnew để ép đè toàn bộ các file bị SỬA về mặc định
     - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
     - onlyif: |
         dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: disable_apt_restart
 
+#Chỉ tạo lại liên kết cho các module chuẩn, an toàn, đi kèm gói cài đặt mặc định
 restore_nginx_modules:
   cmd.run:
     - name: |
         mkdir -p /etc/nginx/modules-enabled
-        if [ -d /usr/share/nginx/modules-available ]; then
-          ln -sf /usr/share/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
-        elif [ -d /etc/nginx/modules-available ]; then
-          ln -sf /etc/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
-        fi
+        for mod in 50-mod-http-ndk 50-mod-http-passenger 50-mod-mail 50-mod-stream; do
+          if [ -f "/usr/share/nginx/modules-available/${mod}.conf" ]; then
+            ln -sf "/usr/share/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
+          elif [ -f "/etc/nginx/modules-available/${mod}.conf" ]; then
+            ln -sf "/etc/nginx/modules-available/${mod}.conf" "/etc/nginx/modules-enabled/${mod}.conf"
+          fi
+        done
     - onlyif: '[ ! -d /etc/nginx/modules-enabled ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
     - require:
       - cmd: restore_nginx_core
@@ -39,7 +41,7 @@ enable_apt_restart:
       - cmd: disable_apt_restart
 
 # ==============================================================================
-# 2. SỬA LỖI 2: TỰ ĐỘNG TRUY QUÉT VÀ XÓA FILE LẠ THÊM MỚI (CREATE/MOVED_TO)
+# 2. TỰ ĐỘNG TRUY QUÉT VÀ XÓA FILE LẠ THÊM MỚI (CREATE/MOVED_TO)
 # ==============================================================================
 purge_untracked_nginx_files:
   cmd.run:
