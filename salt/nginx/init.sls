@@ -1,32 +1,66 @@
 repair_nginx_core_files:
   cmd.run:
     - name: |
-        echo "🛑 Khóa tiến trình restart của APT..."
-        echo "exit 101" > /usr/sbin/policy-rc.d
-        chmod +x /usr/sbin/policy-rc.d
-
+        echo "🛑 Khởi động cơ chế khôi phục nhanh bằng trích xuất mục tiêu (Targeted Extraction)..."
+        
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
         if [ -n "$PKGS" ]; then
-          # 🔥 CẢI TIẾN: Lấy danh sách file thực sự bị drift trước
+          # 1. Lấy danh sách file/thư mục hệ thống thực sự bị drift hoặc xóa mất
           DRIFTED_FILES=$(dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | awk '{print $NF}')
           
           if [ -n "$DRIFTED_FILES" ]; then
-            echo "⚠️ [ANTI-DRIFT] Phát hiện file hệ thống bị thay đổi: $DRIFTED_FILES"
-            echo "🧹 Tiến hành xóa các file lỗi..."
-            echo "$DRIFTED_FILES" | xargs rm -f
-
-            echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
-            apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+            echo "⚠️ [ANTI-DRIFT] Phát hiện thành phần cốt lõi bị thay đổi:"
+            echo "$DRIFTED_FILES"
+            
+            # 2. Tạo thư mục tạm biệt lập để xử lý giải nén
+            TMP_DIR=$(mktemp -d)
+            trap 'rm -rf "$TMP_DIR"' EXIT
+            cd "$TMP_DIR"
+            
+            # 3. Duyệt qua từng file lỗi để thực hiện "vá phẫu thuật"
+            echo "$DRIFTED_FILES" | while read -r current_item; do
+              if [ -z "$current_item" ]; then continue; fi
+              
+              # Tìm chính xác package quản lý file/thư mục này
+              PKG_OWNER=$(dpkg -S "$current_item" 2>/dev/null | cut -d: -f1 | head -n 1)
+              
+              if [ -n "$PKG_OWNER" ]; then
+                echo "🛠️ Đang trích xuất hoàn nguyên: $current_item từ package gốc [$PKG_OWNER]..."
+                
+                # Tải nhanh file .deb (nếu đã có trong cache của apt thì tốc độ là mili-giây)
+                apt-get download "$PKG_OWNER" >/dev/null 2>&1
+                DEB_FILE=$(ls ${PKG_OWNER}_*.deb 2>/dev/null | head -n 1)
+                
+                if [ -n "$DEB_FILE" ]; then
+                  # Giải nén thô gói deb ra thư mục riêng
+                  mkdir -p "extract_$PKG_OWNER"
+                  dpkg-deb -x "$DEB_FILE" "extract_$PKG_OWNER" >/dev/null 2>&1
+                  
+                  # Nếu file/thư mục sạch có tồn tại trong deb
+                  if [ -e "extract_$PKG_OWNER$current_item" ]; then
+                    # Xóa thành phần lỗi cũ trên hệ thống (nếu có) để tránh xung đột kiểu dữ liệu (file vs directory)
+                    if [ -e "$current_item" ] || [ -L "$current_item" ]; then
+                      rm -rf "$current_item"
+                    fi
+                    
+                    # Đảm bảo thư mục cha tồn tại và chép trả lại nguyên bản (giữ nguyên quyền và owner gốc)
+                    mkdir -p "$(dirname "$current_item")"
+                    cp -a "extract_$PKG_OWNER$current_item" "$current_item"
+                    echo "✅ Đã vá thành công: $current_item"
+                  fi
+                  
+                  # Dọn file deb vừa dùng để không ảnh hưởng vòng lặp sau
+                  rm -f "$DEB_FILE"
+                fi
+              fi
+            done
+            echo "✨ Toàn bộ file core đã được đưa về trạng thái nguyên bản sạch sẽ!"
           else
-            echo "✅ Cấu hình core sạch sẽ, không phát hiện drift. Bỏ qua reinstall để tránh loop!"
+            echo "✅ Cấu hình core sạch sẽ, không phát hiện drift. Bỏ qua!"
           fi
         fi
-
-        echo "🔓 Mở khóa policy-rc.d..."
-        rm -f /usr/sbin/policy-rc.d
     - onlyif: |
         PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
-        # 🔥 SỬA TẠI ĐÂY: Thêm nginx.conf vào onlyif để tránh trigger oan
         dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | grep -q .
     - order: 1
 
