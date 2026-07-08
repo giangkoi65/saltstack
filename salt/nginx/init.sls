@@ -18,7 +18,7 @@ restore_nginx_core:
     - require:
       - cmd: disable_apt_restart
 
-#Chỉ tạo lại liên kết cho các module chuẩn, an toàn, đi kèm gói cài đặt mặc định
+# 🔥 SỬA ĐỔI: Chỉ tạo lại liên kết cho các module chuẩn, an toàn, đi kèm gói cài đặt mặc định
 restore_nginx_modules:
   cmd.run:
     - name: |
