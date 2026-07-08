@@ -1,28 +1,77 @@
 # ==============================================================================
-# 1. TỰ ĐỘNG DIỆT FILE LẠ THÊM MỚI (CHUẨN XÁC, AN TOÀN)
+# 1. TỰ ĐỘNG DIỆT FILE LẠ THÊM MỚI (CREATE/MOVED_TO)
 # ==============================================================================
 purge_untracked_nginx_files:
   cmd.run:
     - name: |
-        # Sử dụng dấu ngoặc \( \) để gom nhóm chính xác điều kiện tìm kiếm file thông thường hoặc symlink
         find /etc/nginx \( -type f -o -type l \) | while read -r f; do
-          
-          # Bỏ qua các file cấu hình do chính Salt quản lý công khai
           if [ "$f" = "/etc/nginx/nginx.conf" ] || [ "$f" = "/etc/nginx/sites-available/mysite.conf" ] || [ "$f" = "/etc/nginx/sites-enabled/mysite.conf" ]; then
             continue
           fi
-
-          # Kiểm tra xem file có thuộc bất kỳ package nào của hệ thống không
           if ! dpkg -S "$f" >/dev/null 2>&1; then
             rm -f "$f"
           fi
         done
-        # Xóa các thư mục rỗng phát sinh nhưng giữ lại thư mục gốc /etc/nginx
         find /etc/nginx -type d -empty -not -path /etc/nginx -delete
-    - order: 1
 
 # ==============================================================================
-# 2. QUẢN LÝ CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST
+# 2. PHÁT HIỆN & ÉP BUỘC HOÀN NGUYÊN FILE HỆ THỐNG BỊ SỬA ĐỔI/MẤT
+# ==============================================================================
+disable_apt_restart:
+  cmd.run:
+    - name: |
+        echo "exit 101" > /usr/sbin/policy-rc.d
+        chmod +x /usr/sbin/policy-rc.d
+    - onlyif: |
+        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
+    - require:
+      - cmd: purge_untracked_nginx_files
+
+restore_nginx_core:
+  cmd.run:
+    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
+    - onlyif: |
+        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
+    - require:
+      - cmd: disable_apt_restart
+
+# Lọc và chỉ tạo liên kết cho các module có file thực thi .so tồn tại trên ổ đĩa
+restore_nginx_modules:
+  cmd.run:
+    - name: |
+        mkdir -p /etc/nginx/modules-enabled
+        rm -rf /etc/nginx/modules-enabled/*
+        SRC_DIR="/usr/share/nginx/modules-available"
+        if [ ! -d "$SRC_DIR" ] && [ -d "/etc/nginx/modules-available" ]; then
+          SRC_DIR="/etc/nginx/modules-available"
+        fi
+        
+        if [ -d "$SRC_DIR" ]; then
+          for f in "$SRC_DIR"/*.conf; do
+            if [ -f "$f" ]; then
+              SO_PATH=$(awk '/load_module/ {print $2}' "$f" | tr -d '"\';')
+              if [ -n "$SO_PATH" ]; then
+                if [[ "$SO_PATH" != /* ]]; then
+                  SO_PATH="/usr/lib/nginx/$SO_PATH"
+                fi
+                if [ -f "$SO_PATH" ]; then
+                  ln -sf "$f" "/etc/nginx/modules-enabled/$(basename "$f")"
+                fi
+              fi
+            fi
+          done
+        fi
+    - require:
+      - cmd: restore_nginx_core
+
+enable_apt_restart:
+  cmd.run:
+    - name: rm -f /usr/sbin/policy-rc.d
+    - onchanges:
+      - cmd: disable_apt_restart
+
+# ==============================================================================
+# 3. ĐẢM BẢO CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST LUÔN TỒN TẠI
 # ==============================================================================
 /etc/nginx/sites-available:
   file.directory:
@@ -30,6 +79,8 @@ purge_untracked_nginx_files:
     - group: root
     - mode: 755
     - makedirs: True
+    - require:
+      - cmd: restore_nginx_modules
 
 /etc/nginx/sites-enabled:
   file.directory:
@@ -37,6 +88,8 @@ purge_untracked_nginx_files:
     - group: root
     - mode: 755
     - makedirs: True
+    - require:
+      - cmd: restore_nginx_modules
 
 remove_default_vhost:
   file.absent:
@@ -45,36 +98,7 @@ remove_default_vhost:
       - file: /etc/nginx/sites-enabled
 
 # ==============================================================================
-# 3. ĐỒNG BỘ MODULES (XỬ LÝ CẢ FILE THƯỜNG VÀ SYMLINK LẠ)
-# ==============================================================================
-restore_nginx_modules:
-  cmd.run:
-    - name: |
-        mkdir -p /etc/nginx/modules-enabled
-        SRC_DIR="/usr/share/nginx/modules-available"
-        if [ ! -d "$SRC_DIR" ] && [ -d "/etc/nginx/modules-available" ]; then
-          SRC_DIR="/etc/nginx/modules-available"
-        fi
-        
-        if [ -d "$SRC_DIR" ]; then
-          # Quét sạch bất kỳ file thường (-type f) hoặc symlink (-type l) lạ trong modules-enabled
-          find /etc/nginx/modules-enabled/ \( -type f -o -type l \) | while read -r sym; do
-            if [ ! -f "$SRC_DIR/$(basename "$sym")" ]; then
-              rm -f "$sym"
-            fi
-          done
-          
-          # Tạo lại liên kết chuẩn cho các module hợp lệ
-          for f in "$SRC_DIR"/*.conf; do
-            if [ -f "$f" ]; then
-              ln -sf "$f" "/etc/nginx/modules-enabled/$(basename "$f")"
-            fi
-          done
-        fi
-    - order: 2
-
-# ==============================================================================
-# 4. QUẢN LÝ CÁC FILE CẤU HÌNH THEO TEMPLATE (MƯỢT MÀ, KHÔNG DOWNTIME)
+# 4. QUẢN LÝ CÁC FILE CẤU HÌNH TÙY BIẾN THEO TEMPLATE (GHI ĐÈ NẾU SAI LỆCH)
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -83,6 +107,8 @@ restore_nginx_modules:
     - user: root
     - group: root
     - mode: 644
+    - require:
+      - cmd: restore_nginx_modules
 
 /etc/nginx/sites-available/mysite.conf:
   file.managed:
@@ -102,7 +128,7 @@ restore_nginx_modules:
       - file: /etc/nginx/sites-available/mysite.conf
 
 # ==============================================================================
-# 5. DỊCH VỤ NGINX (CHỈ RELOAD KHI THAY ĐỔI FILE CẤU HÌNH THỰC SỰ)
+# 5. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
 # ==============================================================================
 /var/www/mysite:
   file.directory:
@@ -124,7 +150,7 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True   # Sử dụng cơ chế Reload cấu hình mềm (Zero downtime cho người dùng)
+    - reload: True
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
