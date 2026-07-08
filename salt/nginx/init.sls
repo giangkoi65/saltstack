@@ -62,7 +62,7 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True 
-    - exclude_pat: '(default|mysite.conf)' # Loại trừ default và mysite.conf
+    - exclude_pat: '(.*default|mysite.conf)' # Loại trừ default và mysite.conf
     - require:
       - file: manage_nginx_root_dir
 
@@ -73,7 +73,7 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True 
-    - exclude_pat: 'mysite.conf' # Chặn việc xóa nhầm symlink của mysite.conf
+    - exclude_pat: '.*mysite.conf' # Chặn việc xóa nhầm symlink của mysite.conf
     - require:
       - file: manage_nginx_root_dir
 
