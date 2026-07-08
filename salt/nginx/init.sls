@@ -17,7 +17,7 @@ purge_untracked_nginx_files:
         fi
 
 # ==============================================================================
-# 2. PHÁT HIỆN & ÉP BUỘC HOÀN NGUYÊN FILE HỆ THỐNG BỊ SỬA ĐỔI/MẤT
+# 2. PHÁT HIỆN & ÉP BUỘC HOÀN NGUYÊN FILE HỆ THỐNG BỊ SỬA ĐỔI/MẤT (TOÀN DIỆN)
 # ==============================================================================
 disable_apt_restart:
   cmd.run:
@@ -26,20 +26,23 @@ disable_apt_restart:
         chmod +x /usr/sbin/policy-rc.d
     - onlyif: |
         if [ ! -d /etc/nginx ]; then exit 0; fi
-        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
+        # 🔥 THAY ĐỔI: Quét toàn bộ file của gói core, không giới hạn trong /etc/nginx/
+        dpkg --verify nginx nginx-common nginx-core 2>/dev/null | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: purge_untracked_nginx_files
 
 restore_nginx_core:
   cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
+    # 🔥 THAY ĐỔI: Thêm nginx-core và thực hiện daemon-reload để cập nhật lại file dịch vụ cho Systemd
+    - name: |
+        apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common nginx-core
+        systemctl daemon-reload
     - onlyif: |
         if [ ! -d /etc/nginx ]; then exit 0; fi
-        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
+        dpkg --verify nginx nginx-common nginx-core 2>/dev/null | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
     - require:
       - cmd: disable_apt_restart
 
-# 🔥 SỬA ĐỔI: Phân loại module và gán số thứ tự tải (50- / 70-) để tránh lỗi dependency
 restore_nginx_modules:
   cmd.run:
     - name: |
@@ -53,10 +56,7 @@ restore_nginx_modules:
         if [ -d "$SRC_DIR" ]; then
           for f in "$SRC_DIR"/*.conf; do
             if [ -f "$f" ]; then
-              # Chuẩn hóa loại bỏ số cũ nếu có
               BNAME=$(basename "$f" | sed 's/^[0-9]*-//')
-              
-              # Phân chia mức độ ưu tiên
               case "$BNAME" in
                 mod-stream.conf|mod-mail.conf|mod-http*.conf)
                   PREFIX="50-"
