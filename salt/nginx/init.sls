@@ -1,56 +1,90 @@
-# ==============================================================================
-# 1. TỰ ĐỘNG KHÔI PHỤC KHI CẤU HÌNH NGINX BỊ LỖI CÚ PHÁP HOẶC MẤT FILE CORE
-# ==============================================================================
-disable_apt_restart:
+repair_nginx_core_files:
   cmd.run:
     - name: |
+        echo "🛑 Khóa tiến trình restart của APT..."
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
-    # 🔥 CHẠY KHI: Cấu hình Nginx lỗi (nginx -t trả về lỗi) HOẶC file core mime.types bị mất
-    - unless: nginx -t && [ -f /etc/nginx/mime.types ]
+
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        if [ -n "$PKGS" ]; then
+          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi..."
+          # 🔥 SỬA TẠI ĐÂY: Thêm nginx.conf vào danh sách loại trừ bằng grep -vE
+          dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | awk '{print $NF}' | xargs rm -f
+
+          echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
+          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+        fi
+
+        echo "🔓 Mở khóa policy-rc.d..."
+        rm -f /usr/sbin/policy-rc.d
+    - onlyif: |
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        # 🔥 SỬA TẠI ĐÂY: Thêm nginx.conf vào onlyif để tránh trigger oan
+        dpkg -V $PKGS 2>&1 | grep -vE 'sites-enabled/default|/etc/nginx/nginx.conf' | grep -q .
     - order: 1
 
-restore_nginx_core:
-  cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
-    - unless: nginx -t && [ -f /etc/nginx/mime.types ]
+# ==============================================================================
+# 2. ANTI-DRIFT CHUẨN: CHỈ DỌN DẸP NƠI CHỨA CẤU HÌNH ỨNG DỤNG
+# ==============================================================================
+manage_nginx_root_dir:
+  file.directory:
+    - name: /etc/nginx
+    - user: root
+    - group: root
+    - mode: 755
     - require:
-      - cmd: disable_apt_restart
+      - cmd: repair_nginx_core_files
 
-restore_nginx_modules:
-  cmd.run:
-    - name: |
-        echo "Dọn dẹp file rác và nối lại modules sạch..."
-        # Xóa file lỗi *.conf nếu có
-        rm -f /etc/nginx/modules-enabled/*.conf 2>/dev/null
-        rm -f /etc/nginx/modules-enabled/\*.conf 2>/dev/null
-        
-        # Tạo lại liên kết chuẩn
-        for target_dir in /usr/share/nginx/modules-available /etc/nginx/modules-available; do
-          if [ -d "$target_dir" ]; then
-            for file in "$target_dir"/*.conf; do
-              if [ -e "$file" ]; then ln -sf "$file" /etc/nginx/modules-enabled/; fi
-            done
-          fi
-        done
-    - unless: nginx -t
+/etc/nginx/conf.d:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True # Diệt file lạ
     - require:
-      - cmd: restore_nginx_core
+      - file: manage_nginx_root_dir
 
-enable_apt_restart:
-  cmd.run:
-    - name: rm -f /usr/sbin/policy-rc.d
-    - onchanges:
-      - cmd: disable_apt_restart
-
-remove_default_vhost:
-  file.absent:
-    - name: /etc/nginx/sites-enabled/default
+/etc/nginx/modules-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True
     - require:
-      - cmd: restore_nginx_core
+      - file: manage_nginx_root_dir
+
+/etc/nginx/sites-available:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True 
+    - exclude_pat: '(default|mysite.conf)' # Loại trừ default và mysite.conf
+    - require:
+      - file: manage_nginx_root_dir
+
+/etc/nginx/sites-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True 
+    - exclude_pat: 'mysite.conf' # Chặn việc xóa nhầm symlink của mysite.conf
+    - require:
+      - file: manage_nginx_root_dir
+
+nginx_package:
+  pkg.installed:
+    - name: nginx
+    - require:
+      - cmd: repair_nginx_core_files
 
 # ==============================================================================
-# 2. ÁP DỤNG CẤU HÌNH TÙY BIẾN TỪ TEMPLATE JINJA
+# 3. QUẢN LÝ CONFIG TRỤC CỐT DƯỚI DẠNG TEMPLATE JINJA
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -59,23 +93,13 @@ remove_default_vhost:
     - user: root
     - group: root
     - mode: 644
-
-/etc/nginx/sites-available/mysite.conf:
-  file.managed:
-    - source: salt://nginx/files/mysite.conf.jinja
-    - template: jinja
-    - user: root
-    - group: root
-    - mode: 644
-
-/etc/nginx/sites-enabled/mysite.conf:
-  file.symlink:
-    - target: /etc/nginx/sites-available/mysite.conf
     - require:
-      - file: /etc/nginx/sites-available/mysite.conf
+      - pkg: nginx_package
+      - file: manage_nginx_root_dir
+
 
 # ==============================================================================
-# 3. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
+# 4. QUẢN LÝ APP/SITE CONFIGURATION
 # ==============================================================================
 /var/www/mysite:
   file.directory:
@@ -93,12 +117,72 @@ remove_default_vhost:
     - require:
       - file: /var/www/mysite
 
+/etc/nginx/sites-available/mysite.conf:
+  file.managed:
+    - source: salt://nginx/files/mysite.conf.jinja
+    - template: jinja
+    - user: root
+    - group: root
+    - mode: 644
+    - require:
+      - file: /etc/nginx/sites-available
+
+/etc/nginx/sites-enabled/mysite.conf:
+  file.symlink:
+    - target: /etc/nginx/sites-available/mysite.conf
+    - require:
+      - file: /etc/nginx/sites-enabled
+      - file: /etc/nginx/sites-available/mysite.conf
+
+# ==============================================================================
+# 5. ĐIỀU KHIỂN TIẾN TRÌNH DỊCH VỤ
+# ==============================================================================
 nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True
+    - sig: /usr/sbin/nginx
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
-        - file: /var/www/mysite/index.html
+        - file: /etc/nginx/sites-enabled/mysite.conf
+
+# ==============================================================================
+# 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
+# ==============================================================================
+purge_untracked_nginx_root_files:
+  cmd.run:
+    - name: |
+        echo "🔍 Đang quét và dọn dẹp cấu hình rác tại thư mục gốc /etc/nginx..."
+        
+        # 1. Lấy động danh sách các file hợp pháp do chính hệ thống (APT/DPKG) cài đặt tại gốc /etc/nginx
+        PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null | grep -E '^/etc/nginx/[^/]+$')
+        
+        # 2. Định nghĩa các file do chính bạn custom và quản lý qua Salt/Git
+        MY_FILES="/etc/nginx/nginx.conf"
+        
+        # Hợp nhất hai nguồn để tạo thành Whitelist chuẩn
+        WHITELIST=$(echo -e "${PKG_FILES}\n${MY_FILES}" | sort -u)
+        
+        # 3. Quét tất cả các file thực tế đang tồn tại ở thư mục gốc /etc/nginx (không quét sâu vào thư mục con)
+        find /etc/nginx -maxdepth 1 -type f | while read -r current_file; do
+          if ! echo "$WHITELIST" | grep -qxF "$current_file"; then
+            echo "🗑️ [ANTI-DRIFT] Phát hiện file lạ trái phép: $current_file -> Tiến hành XÓA!"
+            rm -f "$current_file"
+          fi
+        done
+    - require:
+      - cmd: repair_nginx_core_files
+      - file: /etc/nginx/nginx.conf
+    - order: 6  # Chạy sau khi các file cấu hình chính đã được Salt map xuống thành công
+
+# ==============================================================================
+# 7. TÁI SINH BEACON - BỌC LÓT CẢ HAI TRƯỜNG HỢP
+# ==============================================================================
+refresh_beacons_watcher:
+  cmd.run:
+    - name: salt-call saltutil.refresh_beacons
+    - order: last
+    - onchanges:
+      - cmd: repair_nginx_core_files  # Trúng kế! Nếu APT chạy cài bù (làm đổi Inode), Beacon sẽ được reload ngay.
+      - file: manage_nginx_root_dir   # Bọc lót nếu thư mục gốc /etc/nginx bị tác động
