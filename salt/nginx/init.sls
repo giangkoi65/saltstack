@@ -149,6 +149,8 @@ refresh_beacons_watcher:
   cmd.run:
     - name: salt-call saltutil.refresh_beacons
     - order: last
+    - onchanges:
+      - file: /etc/nginx
 
 # ==============================================================================
 # 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
