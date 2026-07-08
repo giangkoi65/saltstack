@@ -1,104 +1,70 @@
 # ==============================================================================
-# 1. TỰ ĐỘNG DIỆT FILE LẠ THÊM MỚI (CREATE/MOVED_TO)
+# 1. KHÔI PHỤC CORE TUYỆT ĐỐI BẰNG PACKAGE MANAGER (UPDATE-SAFE)
 # ==============================================================================
-purge_untracked_nginx_files:
+repair_nginx_core_files:
   cmd.run:
     - name: |
-        if [ -d /etc/nginx ]; then
-          find /etc/nginx \( -type f -o -type l \) | while read -r f; do
-            if [ "$f" = "/etc/nginx/nginx.conf" ] || [ "$f" = "/etc/nginx/sites-available/mysite.conf" ] || [ "$f" = "/etc/nginx/sites-enabled/mysite.conf" ]; then
-              continue
-            fi
-            if ! dpkg -S "$f" >/dev/null 2>&1; then
-              rm -f "$f"
-            fi
-          done
-          find /etc/nginx -type d -empty -not -path /etc/nginx -delete
-        fi
-
-# ==============================================================================
-# 2. PHÁT HIỆN & ÉP BUỘC HOÀN NGUYÊN FILE HỆ THỐNG BỊ SỬA ĐỔI/MẤT
-# ==============================================================================
-disable_apt_restart:
-  cmd.run:
-    - name: |
+        echo "🛑 Khóa tiến trình restart của APT..."
         echo "exit 101" > /usr/sbin/policy-rc.d
         chmod +x /usr/sbin/policy-rc.d
-    - onlyif: |
-        if [ ! -d /etc/nginx ]; then exit 0; fi
-        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
-    - require:
-      - cmd: purge_untracked_nginx_files
 
-restore_nginx_core:
-  cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confnew" -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
-    - onlyif: |
-        if [ ! -d /etc/nginx ]; then exit 0; fi
-        dpkg --verify nginx nginx-common 2>/dev/null | grep '/etc/nginx/' | grep -Ev 'nginx.conf|mysite.conf|default' | grep -q .
-    - require:
-      - cmd: disable_apt_restart
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        if [ -n "$PKGS" ]; then
+          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi (trừ default)..."
+          dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | awk '{print $NF}' | xargs rm -f
 
-# 🔥 SỬA ĐỔI: Phân loại module và gán số thứ tự tải (50- / 70-) để tránh lỗi dependency
-restore_nginx_modules:
-  cmd.run:
-    - name: |
-        mkdir -p /etc/nginx/modules-enabled
-        rm -rf /etc/nginx/modules-enabled/*
-        SRC_DIR="/usr/share/nginx/modules-available"
-        if [ ! -d "$SRC_DIR" ] && [ -d "/etc/nginx/modules-available" ]; then
-          SRC_DIR="/etc/nginx/modules-available"
+          echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
+          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
         fi
-        
-        if [ -d "$SRC_DIR" ]; then
-          for f in "$SRC_DIR"/*.conf; do
-            if [ -f "$f" ]; then
-              # Chuẩn hóa loại bỏ số cũ nếu có
-              BNAME=$(basename "$f" | sed 's/^[0-9]*-//')
-              
-              # Phân chia mức độ ưu tiên
-              case "$BNAME" in
-                mod-stream.conf|mod-mail.conf|mod-http*.conf)
-                  PREFIX="50-"
-                  ;;
-                *)
-                  PREFIX="70-"
-                  ;;
-              esac
-              
-              SO_PATH=$(awk '/load_module/ {gsub(/[";]/, "", $2); print $2}' "$f")
-              if [ -n "$SO_PATH" ]; then
-                case "$SO_PATH" in
-                  /*) ;;
-                  *) SO_PATH="/usr/lib/nginx/$SO_PATH" ;;
-                esac
-                if [ -f "$SO_PATH" ]; then
-                  ln -sf "$f" "/etc/nginx/modules-enabled/${PREFIX}${BNAME}"
-                fi
-              fi
-            fi
-          done
-        fi
-    - require:
-      - cmd: restore_nginx_core
 
-enable_apt_restart:
-  cmd.run:
-    - name: rm -f /usr/sbin/policy-rc.d
-    - onchanges:
-      - cmd: disable_apt_restart
+        echo "🔓 Mở khóa policy-rc.d..."
+        rm -f /usr/sbin/policy-rc.d
+    - onlyif: |
+        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -q .
+    - order: 1
 
 # ==============================================================================
-# 3. ĐẢM BẢO CẤU TRÚC THƯ MỤC LÀM VIỆC CỦA VHOST LUÔN TỒN TẠI
+# 2. ANTI-DRIFT CHUẨN: CHỈ DỌN DẸP NƠI CHỨA CẤU HÌNH ỨNG DỤNG
 # ==============================================================================
+manage_nginx_root_dir:
+  file.directory:
+    - name: /etc/nginx
+    - user: root
+    - group: root
+    - mode: 755
+    - require:
+      - cmd: repair_nginx_core_files
+
+/etc/nginx/conf.d:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True # Diệt file lạ
+    - require:
+      - file: manage_nginx_root_dir
+
+/etc/nginx/modules-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True
+    - require:
+      - file: manage_nginx_root_dir
+
 /etc/nginx/sites-available:
   file.directory:
     - user: root
     - group: root
     - mode: 755
     - makedirs: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
+    - exclude_pat: 'default'
     - require:
-      - cmd: restore_nginx_modules
+      - file: manage_nginx_root_dir
 
 /etc/nginx/sites-enabled:
   file.directory:
@@ -106,17 +72,18 @@ enable_apt_restart:
     - group: root
     - mode: 755
     - makedirs: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file cấu hình lén kích hoạt
     - require:
-      - cmd: restore_nginx_modules
+      - file: manage_nginx_root_dir
 
-remove_default_vhost:
-  file.absent:
-    - name: /etc/nginx/sites-enabled/default
+nginx_package:
+  pkg.installed:
+    - name: nginx
     - require:
-      - file: /etc/nginx/sites-enabled
+      - cmd: repair_nginx_core_files
 
 # ==============================================================================
-# 4. QUẢN LÝ CÁC FILE CẤU HÌNH TÙY BIẾN THEO TEMPLATE (GHI ĐÈ NẾU SAI LỆCH)
+# 3. QUẢN LÝ CONFIG TRỤC CỐT DƯỚI DẠNG TEMPLATE JINJA
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -126,7 +93,28 @@ remove_default_vhost:
     - group: root
     - mode: 644
     - require:
-      - cmd: restore_nginx_modules
+      - pkg: nginx_package
+      - file: manage_nginx_root_dir
+
+
+# ==============================================================================
+# 4. QUẢN LÝ APP/SITE CONFIGURATION
+# ==============================================================================
+/var/www/mysite:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/var/www/mysite/index.html:
+  file.managed:
+    - source: salt://nginx/files/index.html
+    - user: root
+    - group: root
+    - mode: 644
+    - require:
+      - file: /var/www/mysite
 
 /etc/nginx/sites-available/mysite.conf:
   file.managed:
@@ -146,30 +134,19 @@ remove_default_vhost:
       - file: /etc/nginx/sites-available/mysite.conf
 
 # ==============================================================================
-# 5. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
+# 5. ĐIỀU KHIỂN TIẾN TRÌNH DỊCH VỤ
 # ==============================================================================
-/var/www/mysite:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-
-/var/www/mysite/index.html:
-  file.managed:
-    - source: salt://nginx/files/index.html
-    - user: root
-    - group: root
-    - mode: 644
-    - require:
-      - file: /var/www/mysite
-
 nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True
+    - sig: /usr/sbin/nginx 
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
-        - file: /var/www/mysite/index.html
+        - file: /etc/nginx/sites-enabled/mysite.conf
+
+refresh_beacons_watcher:
+  cmd.run:
+    - name: salt-call saltutil.refresh_beacons
+    - order: last
