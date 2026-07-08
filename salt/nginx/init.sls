@@ -1,5 +1,5 @@
 # ==============================================================================
-# 1. KHÔI PHỤC CORE TUYỆT ĐỐI BẰNG PACKAGE MANAGER (UPDATE-SAFE)
+# 1. SỬA CHỮA CORE FILES - CHỈ CHẠY KHI THỰC SỰ CÓ FILE BỊ HỎNG/MẤT
 # ==============================================================================
 repair_nginx_core_files:
   cmd.run:
@@ -19,8 +19,10 @@ repair_nginx_core_files:
 
         echo "🔓 Mở khóa policy-rc.d..."
         rm -f /usr/sbin/policy-rc.d
+    # 🌟 ĐIỀU KIỆN QUYẾT ĐỊNH: Chỉ chạy script này nếu dpkg -V phát hiện có sự sai lệch file
     - onlyif: |
-        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -q .
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | grep -q .
     - order: 1
 
 # ==============================================================================
@@ -146,13 +148,6 @@ nginx_service:
         - file: /etc/nginx/sites-available/mysite.conf
         - file: /etc/nginx/sites-enabled/mysite.conf
 
-refresh_beacons_watcher:
-  cmd.run:
-    - name: salt-call saltutil.refresh_beacons
-    - order: last
-    - onchanges:
-      - file: /etc/nginx
-
 # ==============================================================================
 # 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
 # ==============================================================================
@@ -181,3 +176,14 @@ purge_untracked_nginx_root_files:
       - cmd: repair_nginx_core_files
       - file: /etc/nginx/nginx.conf
     - order: 6  # Chạy sau khi các file cấu hình chính đã được Salt map xuống thành công
+
+# ==============================================================================
+# 7. TÁI SINH BEACON - BỌC LÓT CẢ HAI TRƯỜNG HỢP
+# ==============================================================================
+refresh_beacons_watcher:
+  cmd.run:
+    - name: salt-call saltutil.refresh_beacons
+    - order: last
+    - onchanges:
+      - cmd: repair_nginx_core_files  # Trúng kế! Nếu APT chạy cài bù (làm đổi Inode), Beacon sẽ được reload ngay.
+      - file: manage_nginx_root_dir   # Bọc lót nếu thư mục gốc /etc/nginx bị tác động.
