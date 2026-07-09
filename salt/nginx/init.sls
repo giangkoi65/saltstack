@@ -62,7 +62,7 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
-    - exclude_pat: 'default'
+#    - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
 
@@ -154,29 +154,34 @@ refresh_beacons_watcher:
       - file: /etc/nginx
 
 # ==============================================================================
-# 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
+# 6. DỌN SẠCH TUYỆT ĐỐI FILE/THƯ MỤC LẠ TOÀN BỘ /ETC/NGINX (DEEP SCAN ANTI-DRIFT)
 # ==============================================================================
-purge_untracked_nginx_root_files:
+purge_untracked_nginx_structures:
   cmd.run:
     - name: |
-        echo "🔍 Đang quét và dọn dẹp cấu hình rác tại thư mục gốc /etc/nginx..."
+        echo "🔍 [ANTI-DRIFT] Đang quét đệ quy toàn bộ cấu hình tại /etc/nginx..."
         
-        # 1. Lấy động danh sách các file hợp pháp do chính hệ thống (APT/DPKG) cài đặt tại gốc /etc/nginx
-        PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null | grep -E '^/etc/nginx/[^/]+$')
+        # 1. Lấy động danh sách toàn bộ file và thư mục hợp pháp do APT/DPKG cài đặt
+        PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null)
         
-        # 2. Định nghĩa các file do chính bạn custom và quản lý qua Salt/Git
-        MY_FILES="/etc/nginx/nginx.conf"
+        # 2. Định nghĩa các thành phần custom do chính bạn quản lý qua Salt/Git
+        MY_FILES="/etc/nginx/nginx.conf
+        /etc/nginx/sites-available/mysite.conf
+        /etc/nginx/sites-enabled/mysite.conf"
         
-        # Hợp nhất hai nguồn để tạo thành Whitelist chuẩn
+        # Hợp nhất thành một siêu Whitelist chuẩn
         WHITELIST=$(echo -e "${PKG_FILES}\n${MY_FILES}" | sort -u)
         
-        # 3. Quét tất cả các file thực tế đang tồn tại ở thư mục gốc /etc/nginx (không quét sâu vào thư mục con)
-        find /etc/nginx -maxdepth 1 -type f | while read -r current_file; do
-          if ! echo "$WHITELIST" | grep -qxF "$current_file"; then
-            echo "🗑️ [ANTI-DRIFT] Phát hiện file lạ trái phép: $current_file -> Tiến hành XÓA!"
-            rm -f "$current_file"
+        # 3. Quét đệ quy sâu (-mindepth 1) 
+        # Sử dụng 'sort -r' để sắp xếp ngược, đảm bảo file/thư mục con bị xóa trước, thư mục cha xóa sau
+        find /etc/nginx -mindepth 1 | sort -r | while read -r current_item; do
+          if ! echo "$WHITELIST" | grep -qxF "$current_item"; then
+            echo "🗑️ [ANTI-DRIFT] Phát hiện mục lạ trái phép: $current_item -> TIẾN HÀNH XÓA SẠCH!"
+            rm -rf "$current_item"
           fi
         done
     - require:
-      - cmd: repair_nginx_core_files
-      - file: /etc/nginx/nginx.conf
+        - cmd: repair_nginx_core_files
+        - file: /etc/nginx/nginx.conf
+        - file: /etc/nginx/sites-available/mysite.conf
+        - file: /etc/nginx/sites-enabled/mysite.conf
