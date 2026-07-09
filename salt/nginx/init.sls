@@ -7,12 +7,12 @@ install_nginx_packages:
     - order: 1
 
 # ==============================================================================
-# 2. SIÊU LÁ CHẮN DYNAMIC ANTI-DRIFT (BAO QUÁT 100% FILE THEO SƠ ĐỒ TREE)
+# 2. SIÊU LÁ CHẮN DYNAMIC ANTI-DRIFT (CẬP NHẬT: CHECK INTEGRITY QUA MD5)
 # ==============================================================================
 repair_and_purge_nginx_drift:
   cmd.run:
     - name: |
-        echo "🔍 Kiểm tra toàn diện cấu trúc file /etc/nginx..."
+        echo "🔍 Kiểm tra tính toàn vẹn và nội dung của /etc/nginx..."
         CORE_FILES=(
           "etc/nginx/fastcgi.conf" "etc/nginx/fastcgi_params" "etc/nginx/koi-utf" 
           "etc/nginx/koi-win" "etc/nginx/mime.types" "etc/nginx/proxy_params" 
@@ -23,14 +23,30 @@ repair_and_purge_nginx_drift:
         NEED_REPAIR=0
         for file_rel in "${CORE_FILES[@]}"; do
           full_path="/$file_rel"
+          
+          # Điều kiện 1: Kiểm tra tồn tại và quyền sở hữu
           if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
             NEED_REPAIR=1
             break
           fi
+          
+          # Điều kiện 2: Kiểm tra nội dung file qua MD5 gốc của hệ thống (Chống sửa/chèn mã độc)
+          if [ -f /var/lib/dpkg/info/nginx-common.md5sums ]; then
+            EXPECTED_MD5=$(grep -E "^[0-9a-f]{32}  $file_rel$" /var/lib/dpkg/info/nginx-common.md5sums | awk '{print $1}')
+            if [ -n "$EXPECTED_MD5" ]; then
+              CURRENT_MD5=$(md5sum "$full_path" | awk '{print $1}')
+              if [ "$CURRENT_MD5" != "$EXPECTED_MD5" ]; then
+                echo "⚠️ [DRIFT DETECTED] File bị thay đổi nội dung: $full_path"
+                NEED_REPAIR=1
+                break
+              fi
+            fi
+          fi
         done
 
+        # Tiến hành hồi phục nếu bất kỳ điều kiện nào bên trên bị vi phạm
         if [ $NEED_REPAIR -eq 1 ]; then
-          echo "🩹 [REPAIR] Phát hiện sai lệch hệ thống. Đang khôi phục..."
+          echo "🩹 [REPAIR] Tiến hành khôi phục lại toàn bộ file hệ thống từ gói gốc..."
           PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
           if [ -z "$PKG_DEB" ]; then
             apt-get download nginx-common >/dev/null 2>&1
@@ -39,34 +55,31 @@ repair_and_purge_nginx_drift:
           
           for file_rel in "${CORE_FILES[@]}"; do
             full_path="/$file_rel"
-            if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
-              # VÁ ĐIỂM MÙ: Tự động tạo lại thư mục cha (ví dụ: snippets/) nếu bị xóa mất
-              mkdir -p "$(dirname "$full_path")"
-              dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path" 2>/dev/null || true
-              chown root:root "$full_path"
-              chmod 644 "$full_path"
-            fi
+            mkdir -p "$(dirname "$full_path")"
+            # Ép giải nén ghi đè toàn bộ để đảm bảo sạch sẽ 100%
+            dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path" 2>/dev/null || true
+            chown root:root "$full_path"
+            chmod 644 "$full_path"
           done
           
-          # Khôi phục các module gốc trong modules-available/
           mkdir -p /etc/nginx/modules-available
           dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xC / ./etc/nginx/modules-available/ 2>/dev/null || true
           
-          # Tái tạo tự động các liên kết module trong modules-enabled/ (Khớp 100% danh sách symlink trong tree)
           if [ -f /var/lib/dpkg/info/nginx-common.postinst ]; then
             /var/lib/dpkg/info/nginx-common.postinst configure >/dev/null 2>&1 || true
           fi
           rm -f nginx-common_*.deb
+        else
+          echo "✅ Tất cả các file hệ thống đều toàn vẹn."
         fi
 
-        # Quét và dọn dẹp file lạ theo Whitelist từ DPKG cấp phát
+        # Dọn dẹp file lạ bừa bãi không nằm trong whitelist
         WHITELIST=$(dpkg -L nginx-common nginx-core nginx 2>/dev/null | grep '^/etc/nginx')
         WHITELIST+=$'\n'"/etc/nginx/sites-available/mysite.conf"
         WHITELIST+=$'\n'"/etc/nginx/sites-enabled/mysite.conf"
 
         find /etc/nginx -type f -o -type l | while read -r file; do
           if [[ "$file" =~ \.dpkg- ]]; then continue; fi
-          # Giữ lại toàn bộ symlink hợp lệ trỏ tới modules-available (Tránh xóa nhầm 50-mod-*.conf trong tree)
           if [[ "$file" =~ /etc/nginx/modules-enabled/ ]] && [ -L "$file" ]; then continue; fi
           if ! echo "$WHITELIST" | grep -qxF "$file"; then
             echo "🔥 [SECURITY] Tiêu diệt file trái phép: $file"
@@ -74,7 +87,7 @@ repair_and_purge_nginx_drift:
           fi
         done
 
-        # VÁ ĐIỂM MÙ: Loại trừ thêm thư mục 'snippets' không cho phép xóa kể cả khi trống
+        # Loại trừ các thư mục rỗng trục cốt không được xóa
         find /etc/nginx -mindepth 1 -type d -empty \
           ! -path "/etc/nginx/conf.d" \
           ! -path "/etc/nginx/sites-available" \
