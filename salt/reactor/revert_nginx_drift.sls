@@ -3,18 +3,9 @@
 {% set minion_id = data.get('id', '') %}
 
 {% if path %}
-  {# Giai đoạn 1: Bỏ qua các file tạm của text editor nhằm chống nghẽn và loop sự kiện #}
-  {% if '.swp' in path or '.swx' in path or path.endswith('~') or '.save' in path or '/.' in path %}
-ignore_transient_editor_noise:
-  test.configurable_test_state:
-    - tgt: {{ minion_id }}
-    - kwarg:
-        name: "Bỏ qua file tạm: {{ path }}"
-        changes: False
-        result: True
-
-  {% else %}
-    {# Danh sách các cấu hình sống còn trong GitOps #}
+  {# LỌC NHIỄU: Nếu KHÔNG PHẢI file tạm (.swp, .swx, ~, .save) và KHÔNG PHẢI file ẩn (bắt đầu bằng dấu chấm) thì mới xử lý #}
+  {% if '.swp' not in path and '.swx' not in path and not path.endswith('~') and '.save' not in path and not path.split('/')[-1].startswith('.') %}
+    
     {% set managed_files = [
         '/etc/nginx/nginx.conf', 
         '/etc/nginx/sites-available/mysite.conf', 
@@ -22,8 +13,8 @@ ignore_transient_editor_noise:
         '/var/www/mysite/index.html'
     ] %}
 
-    {% if path in managed_files and change not in ['IN_DELETE'] %}
-{# KHỐI 1: Nếu cấu hình chính bị sửa đổi -> Ép ghi đè cục bộ ngay lập tức bằng sls_id #}
+    {% if path in managed_files and 'DELETE' not in change %}
+{# TRƯỜNG HỢP A: Sửa đổi file cấu hình chính -> Ép ghi đè cục bộ ngay lập tức bằng sls_id #}
 revert_specific_managed_file:
   local.state.sls_id:
     - tgt: {{ minion_id }}
@@ -34,26 +25,17 @@ revert_specific_managed_file:
         saltenv: main
         pillarenv: main
 
-    {% elif change in ['IN_CLOSE_WRITE', 'IN_MOVED_TO', 'IN_CREATE'] %}
-{# KHỐI 2: Xử lý file lạ, thư mục lạ sinh ra do touch, mkdir, mv bậy bạ vào đây #}
+    {% elif 'CREATE' in change or 'CLOSE_WRITE' in change or 'MOVED_TO' in change %}
+{# TRƯỜNG HỢP B: Có kẻ tạo file lạ hoặc cấu hình lạ (touch, mkdir, mv bậy vào) -> Tiêu diệt #}
 destroy_rogue_file_or_dir:
   local.file.remove:
     - tgt: {{ minion_id }}
     - arg:
       - {{ path }}
 
-    {% elif change in ['IN_DELETE', 'IN_ATTRIB'] and path not in managed_files %}
-{# KHỐI 3: Chặn phản xạ lặp lại từ chính lệnh xóa của Khối 2 #}
-ignore_automated_cleanup_events:
-  test.configurable_test_state:
-    - tgt: {{ minion_id }}
-    - kwarg:
-        name: "Chặn vòng lặp phản xạ cho lệnh xóa file: {{ path }}"
-        changes: False
-        result: True
-
     {% else %}
-{# KHỐI 4: Nếu mất hẳn cấu hình hệ thống (rm), đổi quyền bừa bãi (chmod) -> Chạy state tổng để vá #}
+{# TRƯỜNG HỢP C: Mọi hành vi XÓA (rm, rmdir) hoặc thay đổi thuộc tính hệ thống (chmod/chown) #}
+{# Chạy state.apply tổng lực để dọn dẹp và khôi phục lại cấu hình chuẩn chỉ trong 0.1 giây #}
 trigger_optimized_nginx_repair:
   local.state.apply:
     - tgt: {{ minion_id }}
@@ -64,5 +46,6 @@ trigger_optimized_nginx_repair:
         saltenv: main
         pillarenv: main
     {% endif %}
+    
   {% endif %}
 {% endif %}
