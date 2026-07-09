@@ -18,6 +18,7 @@ repair_and_purge_nginx_drift:
           "etc/nginx/koi-win" "etc/nginx/mime.types" "etc/nginx/proxy_params" 
           "etc/nginx/scgi_params" "etc/nginx/uwsgi_params" "etc/nginx/win-utf"
           "etc/nginx/snippets/fastcgi-php.conf" "etc/nginx/snippets/snakeoil.conf"
+          "etc/nginx/nginx.conf"
         )
         
         NEED_REPAIR=0
@@ -84,7 +85,7 @@ repair_and_purge_nginx_drift:
             fi
           done
           
-          rm -f nginx-common_*.deb
+          rm -f "$PKG_DEB"
         else
           echo "✅ Tất cả các file hệ thống đều toàn vẹn."
         fi
@@ -93,8 +94,10 @@ repair_and_purge_nginx_drift:
         WHITELIST=$(dpkg -L nginx-common nginx-core nginx 2>/dev/null | grep '^/etc/nginx')
         WHITELIST+=$'\n'"/etc/nginx/sites-available/mysite.conf"
         WHITELIST+=$'\n'"/etc/nginx/sites-enabled/mysite.conf"
+        WHITELIST+=$'\n'"/etc/nginx/conf.d"
+        WHITELIST+=$'\n'"/etc/nginx/snippets"
 
-        find /etc/nginx -type f -o -type l | while read -r file; do
+        find /etc/nginx \( -type f -o -type l \) | while read -r file; do
           if [[ "$file" == *.dpkg-* ]]; then continue; fi
           
           # 🔥 SỬA ĐỔI: Sử dụng String Prefix Matching bảo vệ tuyệt đối nội dung bên trong modules-enabled
