@@ -1,4 +1,12 @@
 # ==============================================================================
+# 1. ĐẢM BẢO GÓI NGINX LUÔN ĐƯỢC CÀI ĐẶT
+# ==============================================================================
+install_nginx_packages:
+  pkg.installed:
+    - name: nginx
+    - order: 1
+
+# ==============================================================================
 # 2. SIÊU LÁ CHẮN DYNAMIC ANTI-DRIFT (CẬP NHẬT: PHỤC HỒI ĐỘNG SYMLINK MODULES)
 # ==============================================================================
 repair_and_purge_nginx_drift:
@@ -104,3 +112,109 @@ repair_and_purge_nginx_drift:
     - order: 2
     - require:
       - pkg: install_nginx_packages
+
+# ==============================================================================
+# 3. QUẢN LÝ ĐỒNG BỘ TOÀN BỘ THƯ MỤC TRỤC CỐT (ĐÃ KHỚP ĐỦ THEO TREE)
+# ==============================================================================
+/etc/nginx:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+
+/etc/nginx/conf.d:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/snippets:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/sites-available:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/sites-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/modules-available:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/modules-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+# VÁ ĐIỂM MÙ 2: Xóa triệt để file cấu hình mặc định không dùng tới để dọn sạch hệ thống
+/etc/nginx/sites-available/default:
+  file.absent
+
+# ==============================================================================
+# 4. QUẢN LÝ FILE CONFIG TRỤC CỐT CỦA CƠ SỞ DỮ LIỆU GITOPS
+# ==============================================================================
+/etc/nginx/nginx.conf:
+  file.managed:
+    - source: salt://nginx/files/nginx.conf.jinja
+    - template: jinja
+    - user: root
+    - group: root
+    - mode: 644
+
+/etc/nginx/sites-available/mysite.conf:
+  file.managed:
+    - source: salt://nginx/files/mysite.conf.jinja
+    - template: jinja
+    - user: root
+    - group: root
+    - mode: 644
+    - require:
+      - file: /etc/nginx/sites-available
+
+/etc/nginx/sites-enabled/mysite.conf:
+  file.symlink:
+    - target: /etc/nginx/sites-available/mysite.conf
+    - require:
+      - file: /etc/nginx/sites-available/mysite.conf
+      - file: /etc/nginx/sites-enabled
+
+# ==============================================================================
+# 5. KIỂM TRA CÚ PHÁP & RE-LOAD AN TOÀN CHO NGƯỜI DÙNG WEB
+# ==============================================================================
+check_nginx_config_syntax:
+  cmd.run:
+    - name: nginx -t
+    - onchanges:
+      - file: /etc/nginx/nginx.conf
+      - file: /etc/nginx/sites-available/mysite.conf
+      - file: /etc/nginx/sites-enabled/mysite.conf
+
+nginx_running_service:
+  service.running:
+    - name: nginx
+    - enable: True
+    - reload: True
+    - require:
+      - cmd: check_nginx_config_syntax
+    - watch:
+      - file: /etc/nginx/nginx.conf
+      - file: /etc/nginx/sites-available/mysite.conf
+      - file: /etc/nginx/sites-enabled/mysite.conf
