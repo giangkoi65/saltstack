@@ -1,53 +1,68 @@
 # ==============================================================================
-# 1. CHẶN APT RESTART VÀ HOÀN NGUYÊN CORE CỦA HỆ THỐNG (CÓ ĐIỀU KIỆN CHẶN LOOP)
+# 1. PHẪU THUẬT PHỤC HỒI FILE HỆ THỐNG GỐC (Bypass APT Reinstall hoàn toàn)
 # ==============================================================================
-disable_apt_restart:
+repair_nginx_core_files:
   cmd.run:
     - name: |
-        echo "exit 101" > /usr/sbin/policy-rc.d
-        chmod +x /usr/sbin/policy-rc.d
-    # 🔥 CHỈ CHẠY khi thực sự phát hiện mất file core (mime.types mất HOẶC thư mục modules bị trống)
+        echo "🔍 Phát hiện sai lệch file hệ thống core. Tiến hành trích xuất vá lỗi..."
+        # Lấy file deb gốc từ bộ nhớ cache hoặc tải nhanh về nếu bị xóa mất
+        PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
+        if [ -z "$PKG_DEB" ]; then
+          apt-get download nginx-common >/dev/null 2>&1
+          PKG_DEB=$(ls -1 nginx-common_*.deb | head -n 1)
+        fi
+        
+        # Danh sách các file hệ thống cần bảo vệ nghiêm ngặt
+        CORE_FILES=("etc/nginx/mime.types" "etc/nginx/fastcgi_params" "etc/nginx/uwsgi_params")
+        
+        for file_rel in "${CORE_FILES[@]}"; do
+          full_path="/$file_rel"
+          # Nếu file bị xóa hoặc bị chỉnh sửa nội dung
+          if [ ! -f "$full_path" ] || [ "$(chown root:root $full_path)" ]; then
+            echo "🩹 Đang vá khẩn cấp: $full_path"
+            dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path"
+            chown root:root "$full_path"
+            chmod 644 "$full_path"
+          fi
+        done
+        
+        # Dọn file vừa tải nếu có
+        rm -f nginx-common_*.deb
     - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
+        # Chỉ chạy khi thực sự có file core hệ thống bị biến mất hoặc sai quyền root
+        [ ! -f /etc/nginx/mime.types ] || [ ! -f /etc/nginx/fastcgi_params ] || [ $(find /etc/nginx -maxdepth 1 -not -user root -o -not -group root | wc -l) -gt 0 ]
     - order: 1
 
-restore_nginx_core:
-  cmd.run:
-    - name: apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y nginx nginx-common
-    - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]
-    - require:
-      - cmd: disable_apt_restart
+# ==============================================================================
+# 2. KHÓA CHẶT THƯ MỤC VÀ DIỆT FILE LẠ
+# ==============================================================================
+manage_nginx_root_dir:
+  file.directory:
+    - name: /etc/nginx
+    - user: root
+    - group: root
+    - mode: 755
 
-# 🔥 SỬA LỖI MODULES: Tự động kéo lại các liên kết ảo sang module gốc nếu thư mục trống
-restore_nginx_modules:
-  cmd.run:
-    - name: |
-        echo "Đang khôi phục các liên kết modules ảo..."
-        if [ -d /usr/share/nginx/modules-available ]; then
-          ln -sf /usr/share/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
-        elif [ -d /etc/nginx/modules-available ]; then
-          ln -sf /etc/nginx/modules-available/*.conf /etc/nginx/modules-enabled/
-        fi
-    - onlyif: '[ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]'
-    - require:
-      - cmd: restore_nginx_core
+/etc/nginx/conf.d:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True
 
-enable_apt_restart:
-  cmd.run:
-    - name: rm -f /usr/sbin/policy-rc.d
-    # Chỉ dọn dẹp policy nếu bước chặn phía trên thực sự có chạy
-    - onchanges:
-      - cmd: disable_apt_restart
-
-remove_default_vhost:
-  file.absent:
-    - name: /etc/nginx/sites-enabled/default
-    - require:
-      - cmd: restore_nginx_core
+/etc/nginx/sites-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True
+    - exclude_pat:
+        - '.*mysite\.conf$'
 
 # ==============================================================================
-# 2. ÁP DỤNG CẤU HÌNH TÙY BIẾN TỪ TEMPLATE JINJA
+# 3. QUẢN LÝ FILE CONFIG TRỤC CỐT (Đẩy trực tiếp từ GitFS)
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -72,30 +87,15 @@ remove_default_vhost:
       - file: /etc/nginx/sites-available/mysite.conf
 
 # ==============================================================================
-# 3. QUẢN LÝ MÃ NGUỒN VÀ DỊCH VỤ (ZERO DOWNTIME)
+# 4. CHỐNG ĐỨT GÃY DỊCH VỤ - ZERO DOWNTIME RELOAD SERVICE
 # ==============================================================================
-/var/www/mysite:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-
-/var/www/mysite/index.html:
-  file.managed:
-    - source: salt://nginx/files/index.html
-    - user: root
-    - group: root
-    - mode: 644
-    - require:
-      - file: /var/www/mysite
-
-nginx_service:
+nginx_running_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True
+    - reload: True # 🔥 ĐIỀU KIỆN TIÊN QUYẾT: Dùng SIGHUP (Reload) thay vì Restart
     - watch:
-        - file: /etc/nginx/nginx.conf
-        - file: /etc/nginx/sites-available/mysite.conf
-        - file: /var/www/mysite/index.html
+      - cmd: repair_nginx_core_files
+      - file: /etc/nginx/nginx.conf
+      - file: /etc/nginx/sites-available/mysite.conf
+      - file: /etc/nginx/sites-enabled/mysite.conf
