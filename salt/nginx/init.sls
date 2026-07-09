@@ -7,21 +7,19 @@ install_nginx_packages:
     - order: 1
 
 # ==============================================================================
-# 2. SIÊU LÁ CHẮN DYNAMIC ANTI-DRIFT (CHỐNG SỬA/XÓA/THÊM FILE LẠ)
+# 2. SIÊU LÁ CHẮN DYNAMIC ANTI-DRIFT (BAO QUÁT 100% FILE THEO SƠ ĐỒ TREE)
 # ==============================================================================
 repair_and_purge_nginx_drift:
   cmd.run:
     - name: |
-        echo "🔍 Kiểm tra nhanh tính toàn vẹn của /etc/nginx..."
-        
+        echo "🔍 Kiểm tra toàn diện cấu trúc file /etc/nginx..."
         CORE_FILES=(
           "etc/nginx/fastcgi.conf" "etc/nginx/fastcgi_params" "etc/nginx/koi-utf" 
           "etc/nginx/koi-win" "etc/nginx/mime.types" "etc/nginx/proxy_params" 
           "etc/nginx/scgi_params" "etc/nginx/uwsgi_params" "etc/nginx/win-utf"
           "etc/nginx/snippets/fastcgi-php.conf" "etc/nginx/snippets/snakeoil.conf"
         )
-
-        # Bước 1: Kiểm tra nhanh xem có file hệ thống nào bị lỗi/mất không
+        
         NEED_REPAIR=0
         for file_rel in "${CORE_FILES[@]}"; do
           full_path="/$file_rel"
@@ -31,55 +29,66 @@ repair_and_purge_nginx_drift:
           fi
         done
 
-        # Bước 2: Chỉ tải và giải nén DEB khi thực sự cần thiết (Lazy Repair)
         if [ $NEED_REPAIR -eq 1 ]; then
-          echo "🩹 [REPAIR] Phát hiện sai lệch file hệ thống. Đang khôi phục từ gói gốc..."
+          echo "🩹 [REPAIR] Phát hiện sai lệch hệ thống. Đang khôi phục..."
           PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
           if [ -z "$PKG_DEB" ]; then
             apt-get download nginx-common >/dev/null 2>&1
             PKG_DEB=$(ls -1 nginx-common_*.deb | head -n 1)
           fi
-
+          
           for file_rel in "${CORE_FILES[@]}"; do
             full_path="/$file_rel"
             if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
+              # VÁ ĐIỂM MÙ: Tự động tạo lại thư mục cha (ví dụ: snippets/) nếu bị xóa mất
+              mkdir -p "$(dirname "$full_path")"
               dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path" 2>/dev/null || true
               chown root:root "$full_path"
               chmod 644 "$full_path"
             fi
           done
           
+          # Khôi phục các module gốc trong modules-available/
+          mkdir -p /etc/nginx/modules-available
           dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xC / ./etc/nginx/modules-available/ 2>/dev/null || true
+          
+          # Tái tạo tự động các liên kết module trong modules-enabled/ (Khớp 100% danh sách symlink trong tree)
           if [ -f /var/lib/dpkg/info/nginx-common.postinst ]; then
             /var/lib/dpkg/info/nginx-common.postinst configure >/dev/null 2>&1 || true
           fi
           rm -f nginx-common_*.deb
         fi
 
-        # Bước 3: Quét và dọn dẹp các file lạ (Độc lập với DEB nên chạy rất nhanh)
+        # Quét và dọn dẹp file lạ theo Whitelist từ DPKG cấp phát
         WHITELIST=$(dpkg -L nginx-common nginx-core nginx 2>/dev/null | grep '^/etc/nginx')
         WHITELIST+=$'\n'"/etc/nginx/sites-available/mysite.conf"
         WHITELIST+=$'\n'"/etc/nginx/sites-enabled/mysite.conf"
-        WHITELIST+=$'\n'"/etc/nginx/sites-available/default"
 
         find /etc/nginx -type f -o -type l | while read -r file; do
           if [[ "$file" =~ \.dpkg- ]]; then continue; fi
+          # Giữ lại toàn bộ symlink hợp lệ trỏ tới modules-available (Tránh xóa nhầm 50-mod-*.conf trong tree)
           if [[ "$file" =~ /etc/nginx/modules-enabled/ ]] && [ -L "$file" ]; then continue; fi
           if ! echo "$WHITELIST" | grep -qxF "$file"; then
-            echo "🔥 [SECURITY] Xóa file/symlink trái phép: $file"
+            echo "🔥 [SECURITY] Tiêu diệt file trái phép: $file"
             rm -f "$file"
           fi
         done
 
-        # Xóa thư mục rỗng lạ (Bao gồm cả thư mục do `mkdir` tạo ra bậy bạ)
-        find /etc/nginx -mindepth 1 -type d -empty ! -path "/etc/nginx/conf.d" -delete
+        # VÁ ĐIỂM MÙ: Loại trừ thêm thư mục 'snippets' không cho phép xóa kể cả khi trống
+        find /etc/nginx -mindepth 1 -type d -empty \
+          ! -path "/etc/nginx/conf.d" \
+          ! -path "/etc/nginx/sites-available" \
+          ! -path "/etc/nginx/sites-enabled" \
+          ! -path "/etc/nginx/modules-available" \
+          ! -path "/etc/nginx/modules-enabled" \
+          ! -path "/etc/nginx/snippets" -delete
     - shell: /bin/bash
     - order: 2
     - require:
       - pkg: install_nginx_packages
 
 # ==============================================================================
-# 3. ĐẢM BẢO QUYỀN VÀ TRẠNG THÁI CÁC THƯ MỤC TRỤC CỐT
+# 3. QUẢN LÝ ĐỒNG BỘ TOÀN BỘ THƯ MỤC TRỤC CỐT (ĐÃ KHỚP ĐỦ THEO TREE)
 # ==============================================================================
 /etc/nginx:
   file.directory:
@@ -94,7 +103,14 @@ repair_and_purge_nginx_drift:
     - mode: 755
     - makedirs: True
 
-/etc/nginx/modules-enabled:
+/etc/nginx/snippets:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/etc/nginx/sites-available:
   file.directory:
     - user: root
     - group: root
@@ -108,27 +124,26 @@ repair_and_purge_nginx_drift:
     - mode: 755
     - makedirs: True
 
-# ==============================================================================
-# 3.5. QUẢN LÝ THƯ MỤC WEB APP VÀ ASSETS (VÁ LỖI BEACON CHẾT ẨN)
-# ==============================================================================
-/var/www/mysite:
+/etc/nginx/modules-available:
   file.directory:
-    - user: www-data
-    - group: www-data
+    - user: root
+    - group: root
     - mode: 755
     - makedirs: True
 
-/var/www/mysite/index.html:
-  file.managed:
-    - source: salt://nginx/files/index.html
-    - user: www-data
-    - group: www-data
-    - mode: 644
-    - require:
-      - file: /var/www/mysite
+/etc/nginx/modules-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+# VÁ ĐIỂM MÙ 2: Xóa triệt để file cấu hình mặc định không dùng tới để dọn sạch hệ thống
+/etc/nginx/sites-available/default:
+  file.absent
 
 # ==============================================================================
-# 4. QUẢN LÝ FILE CONFIG TRỤC CỐT CỦA APP
+# 4. QUẢN LÝ FILE CONFIG TRỤC CỐT CỦA CƠ SỞ DỮ LIỆU GITOPS
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -145,15 +160,18 @@ repair_and_purge_nginx_drift:
     - user: root
     - group: root
     - mode: 644
+    - require:
+      - file: /etc/nginx/sites-available
 
 /etc/nginx/sites-enabled/mysite.conf:
   file.symlink:
     - target: /etc/nginx/sites-available/mysite.conf
     - require:
       - file: /etc/nginx/sites-available/mysite.conf
+      - file: /etc/nginx/sites-enabled
 
 # ==============================================================================
-# 5. KIỂM TRA CÚ PHÁP & RE-LOAD KHÔNG DOWNTIME
+# 5. KIỂM TRA CÚ PHÁP & RE-LOAD AN TOÀN CHO NGƯỜI DÙNG WEB
 # ==============================================================================
 check_nginx_config_syntax:
   cmd.run:
