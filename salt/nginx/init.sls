@@ -47,6 +47,12 @@ repair_and_purge_nginx_drift:
           NEED_REPAIR=1
         fi
 
+        # 🔥 CHECK SYMLINK sites-enabled
+        if [ ! -L /etc/nginx/sites-enabled/mysite.conf ]; then
+          echo "⚠️ [DRIFT DETECTED] Symlink sites-enabled bị mất"
+          NEED_REPAIR=1
+        fi
+
         if [ $NEED_REPAIR -eq 1 ]; then
           echo "🩹 [REPAIR] Tiến hành khôi phục lại toàn bộ file hệ thống từ gói gốc..."
           PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
