@@ -61,7 +61,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
+    - clean: True
     - exclude_pat: 'default'
     - require:
       - file: manage_nginx_root_dir
@@ -72,7 +72,7 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file cấu hình lén kích hoạt
+    - clean: True
     - require:
       - file: manage_nginx_root_dir
 
@@ -139,7 +139,8 @@ nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - sig: /usr/sbin/nginx 
+    - sig: /usr/sbin/nginx
+    - reload: True
     - watch:
         - file: /etc/nginx/nginx.conf
         - file: /etc/nginx/sites-available/mysite.conf
