@@ -21,6 +21,4 @@ beacons:
             - delete_self
             - attrib
           recurse: True
-    - {% if data.get('tag', '').startswith('salt/job') %}
-        # skip
-      {% endif %}
+    - disable_during_state_run: True
