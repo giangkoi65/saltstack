@@ -1,135 +1,39 @@
 # ==============================================================================
-# 1. ĐẢM BẢO GÓI NGINX LUÔN ĐƯỢC CÀI ĐẶT
+# 1. KHÔI PHỤC CORE TUYỆT ĐỐI BẰNG PACKAGE MANAGER (UPDATE-SAFE)
 # ==============================================================================
-install_nginx_packages:
-  pkg.installed:
-    - name: nginx
+repair_nginx_core_files:
+  cmd.run:
+    - name: |
+        echo "🛑 Khóa tiến trình restart của APT..."
+        echo "exit 101" > /usr/sbin/policy-rc.d
+        chmod +x /usr/sbin/policy-rc.d
+
+        PKGS=$(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}')
+        if [ -n "$PKGS" ]; then
+          echo "🧹 Tự động tìm và XÓA SẠCH các file cấu hình bị thay đổi (trừ default)..."
+          dpkg -V $PKGS 2>&1 | grep -v 'sites-enabled/default' | awk '{print $NF}' | xargs rm -f
+
+          echo "📦 Cài bù hoàn nguyên file sạch từ Package gốc..."
+          apt-get install --reinstall -o Dpkg::Options::="--force-confmiss" -y $PKGS
+        fi
+
+        echo "🔓 Mở khóa policy-rc.d..."
+        rm -f /usr/sbin/policy-rc.d
+    - onlyif: |
+        dpkg -V $(dpkg -l '*nginx*' | grep '^ii' | awk '{print $2}') 2>&1 | grep -v 'sites-enabled/default' | grep -q .
     - order: 1
 
 # ==============================================================================
-# 2. SIÊU LÁ CHẮN DYNAMIC ANTI-DRIFT (CẬP NHẬT: PHỤC HỒI ĐỘNG SYMLINK MODULES)
+# 2. ANTI-DRIFT CHUẨN: CHỈ DỌN DẸP NƠI CHỨA CẤU HÌNH ỨNG DỤNG
 # ==============================================================================
-repair_and_purge_nginx_drift:
-  cmd.run:
-    - name: |
-        echo "🔍 Kiểm tra tính toàn vẹn và nội dung của /etc/nginx..."
-        CORE_FILES=(
-          "etc/nginx/fastcgi.conf" "etc/nginx/fastcgi_params" "etc/nginx/koi-utf" 
-          "etc/nginx/koi-win" "etc/nginx/mime.types" "etc/nginx/proxy_params" 
-          "etc/nginx/scgi_params" "etc/nginx/uwsgi_params" "etc/nginx/win-utf"
-          "etc/nginx/snippets/fastcgi-php.conf" "etc/nginx/snippets/snakeoil.conf"
-          "etc/nginx/nginx.conf"
-        )
-        
-        NEED_REPAIR=0
-        for file_rel in "${CORE_FILES[@]}"; do
-          full_path="/$file_rel"
-          if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
-            NEED_REPAIR=1
-            break
-          fi
-          
-          if [ -f /var/lib/dpkg/info/nginx-common.md5sums ]; then
-            EXPECTED_MD5=$(grep -E "^[0-9a-f]{32}  $file_rel$" /var/lib/dpkg/info/nginx-common.md5sums | awk '{print $1}')
-            if [ -n "$EXPECTED_MD5" ]; then
-              CURRENT_MD5=$(md5sum "$full_path" | awk '{print $1}')
-              if [ "$CURRENT_MD5" != "$EXPECTED_MD5" ]; then
-                echo "⚠️ [DRIFT DETECTED] File bị thay đổi nội dung: $full_path"
-                NEED_REPAIR=1
-                break
-              fi
-            fi
-          fi
-        done
-
-        # KIỂM TRA BỔ SUNG: Nếu thư mục modules-enabled trống rỗng, ép buộc kích hoạt khôi phục
-        if [ -d /etc/nginx/modules-enabled ] && [ -z "$(ls -A /etc/nginx/modules-enabled 2>/dev/null)" ]; then
-          echo "⚠️ [DRIFT DETECTED] Thư mục modules-enabled bị trống, cần nạp lại symlink."
-          NEED_REPAIR=1
-        fi
-
-        # 🔥 CHECK SYMLINK sites-enabled
-        if [ ! -L /etc/nginx/sites-enabled/mysite.conf ]; then
-          echo "⚠️ [DRIFT DETECTED] Symlink sites-enabled bị mất"
-          NEED_REPAIR=1
-        fi
-
-        if [ $NEED_REPAIR -eq 1 ]; then
-          echo "🩹 [REPAIR] Tiến hành khôi phục lại toàn bộ file hệ thống từ gói gốc..."
-          PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
-          if [ -z "$PKG_DEB" ]; then
-            apt-get download nginx-common >/dev/null 2>&1
-            PKG_DEB=$(ls -1 nginx-common_*.deb | head -n 1)
-          fi
-          
-          for file_rel in "${CORE_FILES[@]}"; do
-            full_path="/$file_rel"
-            mkdir -p "$(dirname "$full_path")"
-            dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path" 2>/dev/null || true
-            chown root:root "$full_path"
-            chmod 644 "$full_path"
-          done
-          
-          mkdir -p /etc/nginx/modules-available
-          dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xC / ./etc/nginx/modules-available/ 2>/dev/null || true
-          
-          if [ -f /var/lib/dpkg/info/nginx-common.postinst ]; then
-            /var/lib/dpkg/info/nginx-common.postinst configure >/dev/null 2>&1 || true
-          fi
-
-          # 🔥 CƠ CHẾ KHÔI PHỤC MODULE: Tìm tất cả các gói module đã cài và ép tái tạo lại symlink gốc
-          dpkg -l | grep -E '^ii  libnginx-mod-' | awk '{print $2}' | while read -r pkg; do
-            if [ -f "/var/lib/dpkg/info/$pkg.postinst" ]; then
-              echo "🔗 [MODULE REPAIR] Đang tái tạo cấu hình liên kết cho: $pkg"
-              /var/lib/dpkg/info/$pkg.postinst configure >/dev/null 2>&1 || true
-            fi
-          done
-          
-          rm -f "$PKG_DEB"
-        else
-          echo "✅ Tất cả các file hệ thống đều toàn vẹn."
-        fi
-
-        # Dọn dẹp file lạ bừa bãi không nằm trong whitelist
-        WHITELIST=$(dpkg -L nginx-common nginx-core nginx 2>/dev/null | grep '^/etc/nginx')
-        WHITELIST+=$'\n'"/etc/nginx/sites-available/mysite.conf"
-        WHITELIST+=$'\n'"/etc/nginx/sites-enabled/mysite.conf"
-        WHITELIST+=$'\n'"/etc/nginx/conf.d"
-        WHITELIST+=$'\n'"/etc/nginx/snippets"
-
-        find /etc/nginx \( -type f -o -type l \) | while read -r file; do
-          if [[ "$file" == *.dpkg-* ]]; then continue; fi
-          
-          # 🔥 SỬA ĐỔI: Sử dụng String Prefix Matching bảo vệ tuyệt đối nội dung bên trong modules-enabled
-          if [[ "$file" == "/etc/nginx/modules-enabled/"* ]]; then continue; fi
-          
-          if ! echo "$WHITELIST" | grep -qxF "$file"; then
-            echo "🔥 [SECURITY] Tiêu diệt file trái phép: $file"
-            rm -f "$file"
-          fi
-        done
-
-        # Loại trừ các thư mục rỗng trục cốt không được xóa
-        find /etc/nginx -mindepth 1 -type d -empty \
-          ! -path "/etc/nginx/conf.d" \
-          ! -path "/etc/nginx/sites-available" \
-          ! -path "/etc/nginx/sites-enabled" \
-          ! -path "/etc/nginx/modules-available" \
-          ! -path "/etc/nginx/modules-enabled" \
-          ! -path "/etc/nginx/snippets" -delete
-    - shell: /bin/bash
-    - order: 2
-    - require:
-      - pkg: install_nginx_packages
-
-# ==============================================================================
-# 3. QUẢN LÝ ĐỒNG BỘ TOÀN BỘ THƯ MỤC TRỤC CỐT (ĐÃ KHỚP ĐỦ THEO TREE)
-# ==============================================================================
-/etc/nginx:
+manage_nginx_root_dir:
   file.directory:
+    - name: /etc/nginx
     - user: root
     - group: root
     - mode: 755
+    - require:
+      - cmd: repair_nginx_core_files
 
 /etc/nginx/conf.d:
   file.directory:
@@ -137,34 +41,9 @@ repair_and_purge_nginx_drift:
     - group: root
     - mode: 755
     - makedirs: True
-
-/etc/nginx/snippets:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-
-/etc/nginx/sites-available:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-
-/etc/nginx/sites-enabled:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
-
-/etc/nginx/modules-available:
-  file.directory:
-    - user: root
-    - group: root
-    - mode: 755
-    - makedirs: True
+    - clean: True # Diệt file lạ
+    - require:
+      - file: manage_nginx_root_dir
 
 /etc/nginx/modules-enabled:
   file.directory:
@@ -172,13 +51,39 @@ repair_and_purge_nginx_drift:
     - group: root
     - mode: 755
     - makedirs: True
+    - clean: True
+    - require:
+      - file: manage_nginx_root_dir
 
-# VÁ ĐIỂM MÙ 2: Xóa triệt để file cấu hình mặc định không dùng tới để dọn sạch hệ thống
-/etc/nginx/sites-available/default:
-  file.absent
+/etc/nginx/sites-available:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file lạ
+    - exclude_pat: 'default'
+    - require:
+      - file: manage_nginx_root_dir
+
+/etc/nginx/sites-enabled:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+    - clean: True # 🔥 Giữ nghiêm ngặt tại đây để diệt file cấu hình lén kích hoạt
+    - require:
+      - file: manage_nginx_root_dir
+
+nginx_package:
+  pkg.installed:
+    - name: nginx
+    - require:
+      - cmd: repair_nginx_core_files
 
 # ==============================================================================
-# 4. QUẢN LÝ FILE CONFIG TRỤC CỐT CỦA CƠ SỞ DỮ LIỆU GITOPS
+# 3. QUẢN LÝ CONFIG TRỤC CỐT DƯỚI DẠNG TEMPLATE JINJA
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -187,6 +92,28 @@ repair_and_purge_nginx_drift:
     - user: root
     - group: root
     - mode: 644
+    - require:
+      - pkg: nginx_package
+      - file: manage_nginx_root_dir
+
+# ==============================================================================
+# 4. QUẢN LÝ APP/SITE CONFIGURATION
+# ==============================================================================
+/var/www/mysite:
+  file.directory:
+    - user: root
+    - group: root
+    - mode: 755
+    - makedirs: True
+
+/var/www/mysite/index.html:
+  file.managed:
+    - source: salt://nginx/files/index.html
+    - user: root
+    - group: root
+    - mode: 644
+    - require:
+      - file: /var/www/mysite
 
 /etc/nginx/sites-available/mysite.conf:
   file.managed:
@@ -202,28 +129,54 @@ repair_and_purge_nginx_drift:
   file.symlink:
     - target: /etc/nginx/sites-available/mysite.conf
     - require:
-      - file: /etc/nginx/sites-available/mysite.conf
       - file: /etc/nginx/sites-enabled
-
-# ==============================================================================
-# 5. KIỂM TRA CÚ PHÁP & RE-LOAD AN TOÀN CHO NGƯỜI DÙNG WEB
-# ==============================================================================
-check_nginx_config_syntax:
-  cmd.run:
-    - name: nginx -t
-    - onchanges:
-      - file: /etc/nginx/nginx.conf
       - file: /etc/nginx/sites-available/mysite.conf
-      - file: /etc/nginx/sites-enabled/mysite.conf
 
-nginx_running_service:
+# ==============================================================================
+# 5. ĐIỀU KHIỂN TIẾN TRÌNH DỊCH VỤ
+# ==============================================================================
+nginx_service:
   service.running:
     - name: nginx
     - enable: True
-    - reload: True
-    - require:
-      - cmd: check_nginx_config_syntax
+    - sig: /usr/sbin/nginx 
     - watch:
+        - file: /etc/nginx/nginx.conf
+        - file: /etc/nginx/sites-available/mysite.conf
+        - file: /etc/nginx/sites-enabled/mysite.conf
+
+refresh_beacons_watcher:
+  cmd.run:
+    - name: salt-call saltutil.refresh_beacons
+    - order: last
+    - onchanges:
+      - file: /etc/nginx
+
+# ==============================================================================
+# 6. DỌN SẠCH FILE LẠ TẠI THƯ MỤC GỐC /ETC/NGINX (DYNAMIC WHITELIST)
+# ==============================================================================
+purge_untracked_nginx_root_files:
+  cmd.run:
+    - name: |
+        echo "🔍 Đang quét và dọn dẹp cấu hình rác tại thư mục gốc /etc/nginx..."
+        
+        # 1. Lấy động danh sách các file hợp pháp do chính hệ thống (APT/DPKG) cài đặt tại gốc /etc/nginx
+        PKG_FILES=$(dpkg -L nginx nginx-common nginx-core 2>/dev/null | grep -E '^/etc/nginx/[^/]+$')
+        
+        # 2. Định nghĩa các file do chính bạn custom và quản lý qua Salt/Git
+        MY_FILES="/etc/nginx/nginx.conf"
+        
+        # Hợp nhất hai nguồn để tạo thành Whitelist chuẩn
+        WHITELIST=$(echo -e "${PKG_FILES}\n${MY_FILES}" | sort -u)
+        
+        # 3. Quét tất cả các file thực tế đang tồn tại ở thư mục gốc /etc/nginx (không quét sâu vào thư mục con)
+        find /etc/nginx -maxdepth 1 -type f | while read -r current_file; do
+          if ! echo "$WHITELIST" | grep -qxF "$current_file"; then
+            echo "🗑️ [ANTI-DRIFT] Phát hiện file lạ trái phép: $current_file -> Tiến hành XÓA!"
+            rm -f "$current_file"
+          fi
+        done
+    - require:
+      - cmd: repair_nginx_core_files
       - file: /etc/nginx/nginx.conf
-      - file: /etc/nginx/sites-available/mysite.conf
-      - file: /etc/nginx/sites-enabled/mysite.conf
+    - order: 6  # Chạy sau khi các file cấu hình chính đã được Salt map xuống thành công
