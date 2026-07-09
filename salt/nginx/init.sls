@@ -1,5 +1,13 @@
 # ==============================================================================
-# 1. PHẪU THUẬT PHỤC HỒI FILE HỆ THỐNG GỐC
+# 1. CÀI ĐẶT GÓI NGINX (SỬA LỖI NGINX NOT FOUND)
+# ==============================================================================
+install_nginx_packages:
+  pkg.installed:
+    - name: nginx
+    - order: 1
+
+# ==============================================================================
+# 2. PHẪU THUẬT PHỤC HỒI FILE HỆ THỐNG GỐC (ĐÃ SỬA LỖI BASH VÀ THÊM KOI-*)
 # ==============================================================================
 repair_nginx_core_files:
   cmd.run:
@@ -11,22 +19,37 @@ repair_nginx_core_files:
           PKG_DEB=$(ls -1 nginx-common_*.deb | head -n 1)
         fi
         
-        CORE_FILES=("etc/nginx/mime.types" "etc/nginx/fastcgi_params" "etc/nginx/uwsgi_params")
+        # Mở rộng danh sách bảo vệ: Thêm koi-utf, koi-win, win-utf, proxy_params...
+        CORE_FILES=(
+          "etc/nginx/mime.types" 
+          "etc/nginx/fastcgi_params" 
+          "etc/nginx/uwsgi_params" 
+          "etc/nginx/koi-utf" 
+          "etc/nginx/koi-win" 
+          "etc/nginx/win-utf"
+          "etc/nginx/scgi_params"
+          "etc/nginx/proxy_params"
+        )
+        
         for file_rel in "${CORE_FILES[@]}"; do
           full_path="/$file_rel"
-          if [ ! -f "$full_path" ] || [ "$(chown root:root $full_path)" ]; then
+          if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
+            echo "🩹 Đang vá khẩn cấp: $full_path"
             dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path"
             chown root:root "$full_path"
             chmod 644 "$full_path"
           fi
         done
         rm -f nginx-common_*.deb
+    - shell: /bin/bash # 🔥 SỬA LỖI: Ép Salt chạy bằng Bash để hiểu cú pháp mảng ()
     - onlyif: |
-        [ ! -f /etc/nginx/mime.types ] || [ ! -f /etc/nginx/fastcgi_params ] || [ $(find /etc/nginx -maxdepth 1 -not -user root -o -not -group root | wc -l) -gt 0 ]
-    - order: 1
+        [ ! -f /etc/nginx/mime.types ] || [ ! -f /etc/nginx/koi-utf ] || [ $(find /etc/nginx -maxdepth 1 -not -user root -o -not -group root | wc -l) -gt 0 ]
+    - order: 2
+    - require:
+      - pkg: install_nginx_packages
 
 # ==============================================================================
-# 2. KHÓA CHẶT VÀ ĐẢM BẢO ĐỦ THƯ MỤC CẤU TRÚC NGINX
+# 3. KHÓA CHẶT VÀ ĐẢM BẢO ĐỦ THƯ MỤC CẤU TRÚC NGINX
 # ==============================================================================
 manage_nginx_root_dir:
   file.directory:
@@ -41,9 +64,8 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True
+    - clean: True # Chống drift cấu hình phụ tại conf.d
 
-# 🔥 BỔ SUNG: Tránh lỗi "No such file or directory" của modules-enabled khi khởi động
 /etc/nginx/modules-enabled:
   file.directory:
     - user: root
@@ -65,12 +87,12 @@ manage_nginx_root_dir:
     - group: root
     - mode: 755
     - makedirs: True
-    - clean: True
+    - clean: True 
     - exclude_pat:
-        - 'mysite.conf' # 🔥 SỬA: Salt dùng relative name để match trong clean, viết thế này sẽ không bị xóa nhầm
+        - 'mysite.conf' # Salt dùng relative name, viết thế này sẽ không bị xóa nhầm
 
 # ==============================================================================
-# 3. QUẢN LÝ FILE CONFIG TRỤC CỐT
+# 4. QUẢN LÝ FILE CONFIG TRỤC CỐT
 # ==============================================================================
 /etc/nginx/nginx.conf:
   file.managed:
@@ -96,7 +118,7 @@ manage_nginx_root_dir:
       - file: /etc/nginx/sites-available/mysite.conf
 
 # ==============================================================================
-# 4. KIỂM TRA CÚ PHÁP & RE-LOAD ZERO DOWNTIME
+# 5. KIỂM TRA CÚ PHÁP & RE-LOAD ZERO DOWNTIME
 # ==============================================================================
 check_nginx_config_syntax:
   cmd.run:
