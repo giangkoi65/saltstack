@@ -12,37 +12,51 @@ install_nginx_packages:
 repair_and_purge_nginx_drift:
   cmd.run:
     - name: |
-        echo "🔍 Bắt đầu quét kiểm tra tính toàn vẹn của toàn bộ /etc/nginx..."
-        PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
-        if [ -z "$PKG_DEB" ]; then
-          apt-get download nginx-common >/dev/null 2>&1
-          PKG_DEB=$(ls -1 nginx-common_*.deb | head -n 1)
-        fi
-
+        echo "🔍 Kiểm tra nhanh tính toàn vẹn của /etc/nginx..."
+        
         CORE_FILES=(
           "etc/nginx/fastcgi.conf" "etc/nginx/fastcgi_params" "etc/nginx/koi-utf" 
           "etc/nginx/koi-win" "etc/nginx/mime.types" "etc/nginx/proxy_params" 
           "etc/nginx/scgi_params" "etc/nginx/uwsgi_params" "etc/nginx/win-utf"
           "etc/nginx/snippets/fastcgi-php.conf" "etc/nginx/snippets/snakeoil.conf"
         )
-        
+
+        # Bước 1: Kiểm tra nhanh xem có file hệ thống nào bị lỗi/mất không
+        NEED_REPAIR=0
         for file_rel in "${CORE_FILES[@]}"; do
           full_path="/$file_rel"
           if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
-            echo "🩹 [REPAIR] Vá khẩn cấp file hệ thống: $full_path"
-            dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path" 2>/dev/null || true
-            chown root:root "$full_path"
-            chmod 644 "$full_path"
+            NEED_REPAIR=1
+            break
           fi
         done
 
-        dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xC / ./etc/nginx/modules-available/ 2>/dev/null || true
+        # Bước 2: Chỉ tải và giải nén DEB khi thực sự cần thiết (Lazy Repair)
+        if [ $NEED_REPAIR -eq 1 ]; then
+          echo "🩹 [REPAIR] Phát hiện sai lệch file hệ thống. Đang khôi phục từ gói gốc..."
+          PKG_DEB=$(ls -1 /var/cache/apt/archives/nginx-common_*.deb 2>/dev/null | head -n 1)
+          if [ -z "$PKG_DEB" ]; then
+            apt-get download nginx-common >/dev/null 2>&1
+            PKG_DEB=$(ls -1 nginx-common_*.deb | head -n 1)
+          fi
 
-        if [ -f /var/lib/dpkg/info/nginx-common.postinst ]; then
-          echo "🔄 [REPAIR] Đang tái tạo các liên kết module hệ thống..."
-          /var/lib/dpkg/info/nginx-common.postinst configure >/dev/null 2>&1 || true
+          for file_rel in "${CORE_FILES[@]}"; do
+            full_path="/$file_rel"
+            if [ ! -f "$full_path" ] || [ "$(stat -c '%U:%G' $full_path)" != "root:root" ]; then
+              dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xOf - "./$file_rel" > "$full_path" 2>/dev/null || true
+              chown root:root "$full_path"
+              chmod 644 "$full_path"
+            fi
+          done
+          
+          dpkg-deb --fsys-tarfile "$PKG_DEB" | tar -xC / ./etc/nginx/modules-available/ 2>/dev/null || true
+          if [ -f /var/lib/dpkg/info/nginx-common.postinst ]; then
+            /var/lib/dpkg/info/nginx-common.postinst configure >/dev/null 2>&1 || true
+          fi
+          rm -f nginx-common_*.deb
         fi
 
+        # Bước 3: Quét và dọn dẹp các file lạ (Độc lập với DEB nên chạy rất nhanh)
         WHITELIST=$(dpkg -L nginx-common nginx-core nginx 2>/dev/null | grep '^/etc/nginx')
         WHITELIST+=$'\n'"/etc/nginx/sites-available/mysite.conf"
         WHITELIST+=$'\n'"/etc/nginx/sites-enabled/mysite.conf"
@@ -52,13 +66,13 @@ repair_and_purge_nginx_drift:
           if [[ "$file" =~ \.dpkg- ]]; then continue; fi
           if [[ "$file" =~ /etc/nginx/modules-enabled/ ]] && [ -L "$file" ]; then continue; fi
           if ! echo "$WHITELIST" | grep -qxF "$file"; then
-            echo "🔥 [SECURITY] Phát hiện và tiêu diệt file/symlink trái phép: $file"
+            echo "🔥 [SECURITY] Xóa file/symlink trái phép: $file"
             rm -f "$file"
           fi
         done
 
+        # Xóa thư mục rỗng lạ (Bao gồm cả thư mục do `mkdir` tạo ra bậy bạ)
         find /etc/nginx -mindepth 1 -type d -empty ! -path "/etc/nginx/conf.d" -delete
-        rm -f nginx-common_*.deb
     - shell: /bin/bash
     - order: 2
     - require:
