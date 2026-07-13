@@ -184,6 +184,7 @@ purge_untracked_nginx_structures:
             rm -rf "$current_item"
           fi
         done
+    - shell: /bin/bash
     - require:
         - cmd: repair_nginx_core_files
         - file: /etc/nginx/nginx.conf
