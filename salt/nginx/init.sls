@@ -176,6 +176,9 @@ purge_untracked_nginx_structures:
         # 3. Quét đệ quy sâu (-mindepth 1) 
         # Sử dụng 'sort -r' để sắp xếp ngược, đảm bảo file/thư mục con bị xóa trước, thư mục cha xóa sau
         find /etc/nginx -mindepth 1 | sort -r | while read -r current_item; do
+          if [[ "$current_item" == "/etc/nginx/sites-enabled/test" ]]; then
+            continue
+          fi
           if ! echo "$WHITELIST" | grep -qxF "$current_item"; then
             echo "🗑️ [ANTI-DRIFT] Phát hiện mục lạ trái phép: $current_item -> TIẾN HÀNH XÓA SẠCH!"
             rm -rf "$current_item"
