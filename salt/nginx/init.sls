@@ -73,6 +73,7 @@ manage_nginx_root_dir:
     - mode: 755
     - makedirs: True
     - clean: True
+    - exclude_pat: 'test'
     - require:
       - file: manage_nginx_root_dir
 
